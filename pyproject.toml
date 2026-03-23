@@ -4,13 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zeno-plugin"
-version = "0.1.0"
+version = "0.2.0"
 description = "Zeno DCC plugins and shared client (Maya, Houdini, Nuke, Blender)"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "httpx>=0.27",
+]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = [
+  "pytest",
+]
 
 [tool.setuptools.packages.find]
 include = ["zeno_client*"]
