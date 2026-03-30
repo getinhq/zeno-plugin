@@ -2,10 +2,12 @@ from __future__ import annotations
 
 """Zeno API client — shared Python library for DCC plugins (resolve, upload, register, session)."""
 
-from ._hash import compute_sha256
+from ._hash import compute_blake3, compute_content_hash, compute_sha256
 from .cache import CacheConfig, LocalCache
 from .cache_exceptions import CacheCorruptError, CacheError, CacheLockTimeoutError
 from .client import ZenoClient, default_client
+from .entropy_segment import EntropyConfig
+from .omni_ingest import OmniIngestResult, ingest_omni_file, materialize_from_manifest_v3
 from .publisher import PublishChunkedResult, publish_chunked_file
 from .exceptions import (
     BadRequest,
@@ -120,11 +122,17 @@ def lock_status(*, project: str, asset: str, representation: str):
 __all__ = [
     "ZenoClient",
     "default_client",
+    "compute_blake3",
+    "compute_content_hash",
     "compute_sha256",
     "CacheConfig",
     "LocalCache",
     "publish_chunked_file",
     "PublishChunkedResult",
+    "EntropyConfig",
+    "OmniIngestResult",
+    "ingest_omni_file",
+    "materialize_from_manifest_v3",
     "CacheError",
     "CacheLockTimeoutError",
     "CacheCorruptError",

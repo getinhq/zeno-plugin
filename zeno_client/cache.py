@@ -6,12 +6,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from ._hash import compute_sha256
+from ._hash import compute_content_hash
 from .cache_exceptions import CacheCorruptError
 from .cache_index import delete_entry, eviction_candidates, get_entry, init_db, total_size_bytes, touch, upsert_entry
 from .cache_lock import file_lock
 from .client import ZenoClient
 from .manifest import try_parse_manifest
+
+try:
+    import zstandard as zstd
+except Exception:  # pragma: no cover
+    zstd = None
 
 
 def _default_cache_root() -> Path:
@@ -22,13 +27,18 @@ def _default_cache_root() -> Path:
 class CacheConfig:
     root_dir: Path = field(default_factory=_default_cache_root)
     max_bytes: int = 50 * 1024 * 1024 * 1024  # 50 GiB
-    verify_sha256: bool = True
+    verify_content_hash: bool = True
+    # Backward-compatible alias; if set, overrides verify_content_hash.
+    verify_sha256: Optional[bool] = None
     verify_size: bool = True
     db_path: Optional[Path] = None
     lock_timeout_s: float = 60.0
 
     def resolved_db_path(self) -> Path:
         return (self.db_path or (self.root_dir / "index.sqlite3")).resolve()
+
+    def should_verify_hash(self) -> bool:
+        return self.verify_content_hash if self.verify_sha256 is None else bool(self.verify_sha256)
 
 
 class LocalCache:
@@ -69,7 +79,7 @@ class LocalCache:
         if head_size is not None and head_size <= 256 * 1024:
             blob_bytes = client.get_blob_bytes(cid)
             m = try_parse_manifest(blob_bytes)
-            if m is not None and m.whole_file_sha256:
+            if m is not None and m.whole_file_blake3:
                 return self._ensure_from_manifest(manifest_id=cid, client=client)
             # Not a manifest; write this raw blob to cache using the bytes we already fetched.
             return self._ensure_raw_blob_from_bytes(content_id=cid, filename=fname, size=size, body=blob_bytes)
@@ -97,9 +107,9 @@ class LocalCache:
         if m is None:
             raise CacheCorruptError("Manifest parse failed", content_id=mid)
 
-        whole = m.whole_file_sha256
+        whole = m.whole_file_blake3
         if not whole:
-            raise CacheCorruptError("Manifest missing whole_file_sha256", content_id=mid)
+            raise CacheCorruptError("Manifest missing whole_file_blake3", content_id=mid)
 
         # Persist manifest for inspection
         manifest_path = manifests_dir / f"{mid}.json"
@@ -126,7 +136,7 @@ class LocalCache:
                 self._touch_index(whole, out_path.name, rel_path, out_path)
                 return out_path
 
-            # Ensure all chunks present
+            # Ensure all raw chunks present
             for ch in m.chunks:
                 h = ch.hash
                 # shard like CAS: first2/next2/hash
@@ -143,8 +153,8 @@ class LocalCache:
                         except OSError:
                             pass
                         raise CacheCorruptError("Chunk size mismatch", content_id=h)
-                if self.config.verify_sha256:
-                    got = compute_sha256(tmp)
+                if self.config.should_verify_hash():
+                    got = compute_content_hash(tmp)
                     if got != h:
                         try:
                             tmp.unlink()
@@ -163,15 +173,43 @@ class LocalCache:
                     pass
 
             with tmp_out.open("wb") as w:
-                for ch in m.chunks:
-                    h = ch.hash
-                    chunk_path = chunks_dir / h[:2] / h[2:4] / h
-                    with chunk_path.open("rb") as r:
-                        while True:
-                            b = r.read(1024 * 1024)
-                            if not b:
-                                break
-                            w.write(b)
+                if m.schema == "chimera.manifest.v3" and m.segments is not None:
+                    for seg in m.segments:
+                        kind = getattr(seg, "kind", "")
+                        if kind == "raw_chunk":
+                            h = getattr(seg, "hash")
+                            chunk_path = chunks_dir / h[:2] / h[2:4] / h
+                            with chunk_path.open("rb") as r:
+                                while True:
+                                    b = r.read(1024 * 1024)
+                                    if not b:
+                                        break
+                                    w.write(b)
+                            continue
+                        if kind == "zstd_dict_patch":
+                            if zstd is None:
+                                raise CacheCorruptError("zstandard is required for patch segment materialization", content_id=mid)
+                            dict_hash = getattr(seg, "dict_hash")
+                            patch_hash = getattr(seg, "patch_hash")
+                            dbytes = client.get_blob_bytes(dict_hash)
+                            pbytes = client.get_blob_bytes(patch_hash)
+                            dctx = zstd.ZstdDecompressor(dict_data=zstd.ZstdCompressionDict(dbytes))
+                            out_bytes = dctx.decompress(
+                                pbytes, max_output_size=max(1, int(getattr(seg, "uncompressed_size")))
+                            )
+                            w.write(out_bytes)
+                            continue
+                        raise CacheCorruptError(f"Unsupported manifest v3 segment kind: {kind}", content_id=mid)
+                else:
+                    for ch in m.chunks:
+                        h = ch.hash
+                        chunk_path = chunks_dir / h[:2] / h[2:4] / h
+                        with chunk_path.open("rb") as r:
+                            while True:
+                                b = r.read(1024 * 1024)
+                                if not b:
+                                    break
+                                w.write(b)
 
             # Verify assembled
             if self.config.verify_size and m.size_bytes:
@@ -181,8 +219,8 @@ class LocalCache:
                     except OSError:
                         pass
                     raise CacheCorruptError("Assembled size mismatch", content_id=whole)
-            if self.config.verify_sha256:
-                got = compute_sha256(tmp_out)
+            if self.config.should_verify_hash():
+                got = compute_content_hash(tmp_out)
                 if got != whole:
                     try:
                         tmp_out.unlink()
@@ -225,8 +263,8 @@ class LocalCache:
                         f"Downloaded size mismatch for {cid[:12]}…: expected {size}, got {st}",
                         content_id=cid,
                     )
-            if self.config.verify_sha256:
-                got = compute_sha256(tmp_path)
+            if self.config.should_verify_hash():
+                got = compute_content_hash(tmp_path)
                 if got != cid:
                     try:
                         tmp_path.unlink()
@@ -296,8 +334,8 @@ class LocalCache:
                     except OSError:
                         pass
                     raise CacheCorruptError("Downloaded size mismatch", content_id=cid)
-            if self.config.verify_sha256:
-                got = compute_sha256(tmp_path)
+            if self.config.should_verify_hash():
+                got = compute_content_hash(tmp_path)
                 if got != cid:
                     try:
                         tmp_path.unlink()

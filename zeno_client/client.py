@@ -45,6 +45,20 @@ class ZenoClient:
             assert isinstance(data, dict)
             return data
 
+    def latest_content_id(self, *, project: str, asset: str, representation: str) -> str | None:
+        with self._client() as c:
+            resp = c.get(
+                _join(self.base_url, "/api/v1/versions/latest-content"),
+                params={"project": project, "asset": asset, "representation": representation},
+            )
+            if resp.status_code == 404:
+                return None
+            data = parse_json(resp, operation="latest_content_id")
+            if not isinstance(data, dict):
+                return None
+            cid = str(data.get("content_id") or "").strip().lower()
+            return cid or None
+
     # --- CAS blobs ---
     def blob_exists(self, content_hash: str) -> bool:
         h = content_hash.strip().lower()

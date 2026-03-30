@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import httpx
+from blake3 import blake3
 
 from zeno_client import CacheConfig, LocalCache, ZenoClient
 
@@ -19,9 +20,7 @@ def test_cache_miss_downloads_and_hits(tmp_path: Path):
     content_id = "5b9d19b6d34f5b2c4c3ed7c2d9f76c1d9b6bfa2ce8d186b4b52a5b22c4b1f1d9"
     # Override the computed hash requirement by using a blob that matches the chosen content_id
     # For this test, we will instead compute hash from blob and use that as content_id.
-    import hashlib
-
-    content_id = hashlib.sha256(blob).hexdigest()
+    content_id = blake3(blob).hexdigest()
     filename = "hero.fbx"
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -49,10 +48,8 @@ def test_cache_miss_downloads_and_hits(tmp_path: Path):
 def test_cache_eviction_lru(tmp_path: Path):
     blob1 = b"a" * 10
     blob2 = b"b" * 10
-    import hashlib
-
-    cid1 = hashlib.sha256(blob1).hexdigest()
-    cid2 = hashlib.sha256(blob2).hexdigest()
+    cid1 = blake3(blob1).hexdigest()
+    cid2 = blake3(blob2).hexdigest()
 
     # First resolve returns blob1, second resolve returns blob2.
     calls = {"resolve": 0}
@@ -92,9 +89,7 @@ def test_cache_eviction_lru(tmp_path: Path):
 
 def test_cache_uses_lock_and_is_idempotent(tmp_path: Path):
     blob = b"x" * 5
-    import hashlib
-
-    cid = hashlib.sha256(blob).hexdigest()
+    cid = blake3(blob).hexdigest()
     filename = "x.bin"
     downloads = {"count": 0}
 

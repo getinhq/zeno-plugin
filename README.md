@@ -21,7 +21,7 @@ Example usage:
 
 ```python
 from pathlib import Path
-from zeno_client import CacheConfig, LocalCache, ZenoClient, compute_sha256
+from zeno_client import CacheConfig, LocalCache, ZenoClient, compute_blake3
 from zeno_client.publisher import publish_chunked_file
 
 c = ZenoClient()
@@ -43,7 +43,7 @@ print("Cached at:", local_path)
 
 # Upload + Register-Version
 p = Path("/path/to/file.fbx")
-h = compute_sha256(p)
+h = compute_blake3(p)
 created = c.upload_blob(p, h)
 v = c.register_version(
     project="MS01",
@@ -95,17 +95,48 @@ Primary API:
 
 This repo supports **resumable + deduplicated uploads** by splitting a file into **content-defined chunks** and uploading only missing chunk blobs to CAS.
 
-- **Chunks**: each chunk is a CAS blob keyed by SHA-256 of the chunk bytes.
-- **Manifest**: a small JSON blob (`schema=chimera.manifest.v1`) stored in CAS; it lists chunk hashes in order and includes the **whole-file SHA-256** for integrity.
+- **Chunks**: each chunk is a CAS blob keyed by BLAKE3 of the chunk bytes.
+- **Manifest**: a small JSON blob (`schema=chimera.manifest.v2`) stored in CAS; it lists chunk hashes in order and includes the **whole-file BLAKE3** for integrity.
 - **Version registration**: `content_id` stored in the versions DB becomes the **manifest hash**.
+
+### Omni-Chunker mode (`chimera.manifest.v3`)
+
+Enable via env:
+
+```bash
+export OMNI_CHUNKER=1
+```
+
+When enabled, publisher uses entropy-aware ingest:
+
+- Low/mid entropy regions -> CDC `raw_chunk` segments.
+- High entropy regions -> optional `zstd_dict_patch` segments (when parent bytes are available and `zstandard` is installed).
+- Manifest schema: `chimera.manifest.v3` with ordered `segments`.
+
+`LocalCache` can materialize v3 manifests with:
+
+- `raw_chunk` replay
+- `zstd_dict_patch` replay (requires `zstandard`)
 
 Cache behavior:
 
 - When resolving a version, `LocalCache` will:
   - treat `content_id` as a **manifest blob** if it parses as `chimera.manifest.v1`
   - download any missing chunks into `~/.chimera/cache/chunks/<prefix>/<hash>`
-  - assemble into `~/.chimera/cache/<whole_file_sha256>/<filename>`
-  - verify assembled file SHA-256 equals `whole_file_sha256`
+  - assemble into `~/.chimera/cache/<whole_file_blake3>/<filename>`
+  - verify assembled file BLAKE3 equals `whole_file_blake3`
+
+## CDC benchmark harness
+
+Run a chunk stability benchmark with real + synthetic mutations:
+
+```bash
+python scripts/cdc_benchmark.py \
+  --left "/Users/osho/Desktop/snow_v4.3.blend" \
+  --right "/Users/osho/Desktop/snow_v4.4.blend" \
+  --synthetic-count 12 \
+  --output /tmp/chimera_cdc_report.json
+```
 
 Inspecting:
 
@@ -115,3 +146,11 @@ Inspecting:
 ## Tech
 
 Python 3.11+. Stack: see [zeno-api docs/DECISION_LOG.md](https://github.com/your-org/zeno-api/blob/main/docs/DECISION_LOG.md).
+
+## Rust + PyO3 (optional path)
+
+If you choose Rust-first entropy/chunking:
+
+- Use `maturin` to build wheels.
+- Ship prebuilt wheels for macOS (arm64 + x86_64), Linux, and Windows.
+- Keep a narrow Python API boundary (scan/chunk functions), and keep manifest/publisher orchestration in Python for fast iteration.

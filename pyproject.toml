@@ -9,6 +9,7 @@ description = "Zeno DCC plugins and shared client (Maya, Houdini, Nuke, Blender)
 requires-python = ">=3.11"
 dependencies = [
   "httpx>=0.27",
+  "blake3>=1.0.0",
 ]
 
 [project.optional-dependencies]

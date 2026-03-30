@@ -1,12 +1,12 @@
-import hashlib
 import os
 from pathlib import Path
 
 import httpx
+from blake3 import blake3
 
 from zeno_client import CacheConfig, LocalCache, ZenoClient
 from zeno_client.chunking import ChunkingConfig, chunk_file
-from zeno_client.manifest import build_manifest_v1, manifest_sha256
+from zeno_client.manifest import build_manifest_v2, manifest_blake3
 
 
 def _transport(handler):
@@ -29,29 +29,29 @@ def test_chunker_stability_small_edit(tmp_path: Path):
     cb = chunk_file(b, cfg=cfg)
 
     # Ignore the first couple chunks (edit near front shifts early boundaries); expect later chunks to overlap.
-    sa = {c.sha256 for c in ca[2:]}
-    sb = {c.sha256 for c in cb[2:]}
+    sa = {c.content_hash for c in ca[2:]}
+    sb = {c.content_hash for c in cb[2:]}
     assert len(sa.intersection(sb)) >= 1
 
 
 def test_cache_manifest_reassembles(tmp_path: Path):
     # Build a small fake file, chunk it, create manifest, and simulate CAS server by serving blob bytes for hashes.
     data = b"hello" * 10000
-    whole = hashlib.sha256(data).hexdigest()
+    whole = blake3(data).hexdigest()
 
     f = tmp_path / "file.bin"
     f.write_bytes(data)
 
     cfg = ChunkingConfig(avg=4096, min=1024, max=16384)
     chunks = chunk_file(f, cfg=cfg)
-    manifest_bytes = build_manifest_v1(
+    manifest_bytes = build_manifest_v2(
         filename="file.bin",
         size_bytes=len(data),
-        whole_file_sha256=whole,
+        whole_file_blake3=whole,
         chunking=cfg,
         chunks=chunks,
     )
-    mid = manifest_sha256(manifest_bytes)
+    mid = manifest_blake3(manifest_bytes)
 
     # CAS store: key->bytes
     store = {mid: manifest_bytes}
@@ -59,7 +59,7 @@ def test_cache_manifest_reassembles(tmp_path: Path):
     with f.open("rb") as r:
         for ch in chunks:
             r.seek(ch.offset)
-            store[ch.sha256] = r.read(ch.size)
+            store[ch.content_hash] = r.read(ch.size)
 
     def handler(req: httpx.Request) -> httpx.Response:
         if req.url.path == "/api/v1/resolve":
@@ -80,5 +80,5 @@ def test_cache_manifest_reassembles(tmp_path: Path):
     out = cache.ensure_uri_cached("asset://P/A/latest/bin", client=c)
     assert out.exists()
     assert out.read_bytes() == data
-    assert hashlib.sha256(out.read_bytes()).hexdigest() == whole
+    assert blake3(out.read_bytes()).hexdigest() == whole
 
