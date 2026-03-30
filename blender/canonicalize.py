@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import os
 import struct
 from pathlib import Path
 from typing import NamedTuple
@@ -178,6 +179,19 @@ def canonicalize(raw_data: bytes) -> bytes:
     """
     decompressed = _decompress(raw_data)
     abi = _parse_abi(decompressed)
+    # Safety default:
+    # Pointer-zeroing can improve dedup but may produce files that some Blender
+    # builds/plugins cannot safely consume. Keep decompression-only unless
+    # explicitly opted in.
+    do_zero = str(os.environ.get("CHIMERA_BLEND_ZERO_OLD_PTR", "0")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if not do_zero:
+        return decompressed
+
     canonical, zeroed = _zero_pointers(decompressed, abi)
     return canonical
 

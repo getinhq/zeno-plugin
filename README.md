@@ -118,6 +118,17 @@ When enabled, publisher uses entropy-aware ingest:
 - `raw_chunk` replay
 - `zstd_dict_patch` replay (requires `zstandard`)
 
+### Dual-artifact mode (DCC canonical + Omni, e.g. Blender)
+
+When `publish_chunked_file(..., use_omni=True, dcc="blender")` and a DCC canonicalizer runs:
+
+- **Delivery artifact**: the original file bytes are uploaded as a single CAS blob; **register-version** uses that blob’s BLAKE3 as `content_id` (resolver + `LocalCache` load the byte-identical source file).
+- **Dedup artifact**: the Omni `chimera.manifest.v3` manifest (and chunk/patch blobs) remains in CAS; its hash is stored under `versions.metadata.dedup_artifact` (`content_id`, `schema`, `dcc`, `dcc_canonical`).
+- **Parent resolution for v2+**: the publisher calls `latest_content_id(..., artifact="dedup")` so Omni patching references the previous **manifest** id, not the raw delivery hash.
+- **`PublishChunkedResult`**: `delivery_content_id` / `dedup_manifest_id` expose both; `manifest_id` remains the dedup manifest id for backward compatibility.
+
+Versions without `metadata.dedup_artifact` behave as before (single manifest `content_id`).
+
 Cache behavior:
 
 - When resolving a version, `LocalCache` will:

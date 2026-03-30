@@ -45,11 +45,30 @@ class ZenoClient:
             assert isinstance(data, dict)
             return data
 
-    def latest_content_id(self, *, project: str, asset: str, representation: str) -> str | None:
+    def latest_content_id(
+        self,
+        *,
+        project: str,
+        asset: str,
+        representation: str,
+        artifact: str = "delivery",
+    ) -> str | None:
+        """
+        Resolve latest CAS content id for a representation.
+
+        artifact:
+          - delivery (default): primary blob for resolver/DCC load (raw file for dual-artifact blend).
+          - dedup: canonical manifest id from versions.metadata.dedup_artifact when present (Omni parent).
+        """
         with self._client() as c:
             resp = c.get(
                 _join(self.base_url, "/api/v1/versions/latest-content"),
-                params={"project": project, "asset": asset, "representation": representation},
+                params={
+                    "project": project,
+                    "asset": asset,
+                    "representation": representation,
+                    "artifact": artifact,
+                },
             )
             if resp.status_code == 404:
                 return None
@@ -156,6 +175,7 @@ class ZenoClient:
         content_id: str,
         filename: str | None = None,
         size: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "project": project,
@@ -168,6 +188,8 @@ class ZenoClient:
             body["filename"] = filename
         if size is not None:
             body["size"] = size
+        if metadata is not None:
+            body["metadata"] = metadata
         with self._client() as c:
             resp = c.post(_join(self.base_url, "/api/v1/versions"), json=body)
             data = parse_json(resp, operation="register_version")

@@ -11,7 +11,7 @@ from .client import ZenoClient
 from .dcc_registry import canonicalize_file
 from .entropy_segment import EntropyConfig
 from .manifest import build_manifest_v2, manifest_blake3
-from .omni_ingest import ingest_omni_file, materialize_from_manifest_v3
+from .omni_ingest import ingest_omni_file
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,9 @@ class PublishChunkedResult:
     chunk_count: int
     uploaded_chunks: int
     registered_version: dict[str, Any]
+    # Dual-artifact (Omni + DCC canonical): delivery = raw file hash; dedup = manifest_id
+    delivery_content_id: Optional[str] = None
+    dedup_manifest_id: Optional[str] = None
 
     @property
     def whole_file_sha256(self) -> str:
@@ -80,7 +83,7 @@ def publish_chunked_file(
     if use_omni:
         if parent_content_id is None:
             parent_content_id = client.latest_content_id(
-                project=project, asset=asset, representation=rep
+                project=project, asset=asset, representation=rep, artifact="dedup"
             )
         omni = ingest_omni_file(
             client=client,
@@ -93,6 +96,38 @@ def publish_chunked_file(
             canonical_bytes=canonical_bytes,
             dcc=resolved_dcc or None,
         )
+        # Dual-artifact: raw delivery blob + canonical dedup manifest (DCC canonical path only)
+        if canonical_bytes is not None:
+            delivery_hash = whole
+            if not client.blob_exists(delivery_hash):
+                client.upload_blob(p, delivery_hash)
+            meta = {
+                "dedup_artifact": {
+                    "content_id": omni.manifest_id,
+                    "schema": "chimera.manifest.v3",
+                    "dcc_canonical": omni.dcc_canonical,
+                    "dcc": (resolved_dcc or ""),
+                },
+            }
+            reg = client.register_version(
+                project=project,
+                asset=asset,
+                representation=rep,
+                version=version,
+                content_id=delivery_hash,
+                filename=fname,
+                size=size_bytes,
+                metadata=meta,
+            )
+            return PublishChunkedResult(
+                manifest_id=omni.manifest_id,
+                whole_file_blake3=omni.whole_file_blake3,
+                chunk_count=len(omni.segments),
+                uploaded_chunks=omni.uploaded_chunks + omni.uploaded_aux_blobs,
+                registered_version=reg,
+                delivery_content_id=delivery_hash,
+                dedup_manifest_id=omni.manifest_id,
+            )
         reg = client.register_version(
             project=project,
             asset=asset,
