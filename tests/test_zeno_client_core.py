@@ -32,6 +32,42 @@ def test_resolve_ok():
     assert out["content_id"] == "h"
 
 
+def test_list_projects_ok():
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.method == "GET"
+        assert req.url.path == "/api/v1/projects"
+        assert req.url.params["code"] == "ndfc"
+        return httpx.Response(200, json=[{"id": "p1", "code": "ndfc", "name": "NDFC"}])
+
+    c = ZenoClient(base_url="http://api", transport=_transport(handler))
+    out = c.list_projects(code="ndfc")
+    assert len(out) == 1
+    assert out[0]["id"] == "p1"
+
+
+def test_list_assets_ok():
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.method == "GET"
+        assert req.url.path == "/api/v1/projects/proj-1/assets"
+        assert req.url.params["code"] == "hero"
+        return httpx.Response(200, json=[{"id": "a1", "code": "hero"}])
+
+    c = ZenoClient(base_url="http://api", transport=_transport(handler))
+    out = c.list_assets("proj-1", code="hero")
+    assert out[0]["id"] == "a1"
+
+
+def test_list_asset_version_groups_ok():
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.method == "GET"
+        assert req.url.path == "/api/v1/assets/asset-1/versions"
+        return httpx.Response(200, json=[{"version_number": 3, "representations": []}])
+
+    c = ZenoClient(base_url="http://api", transport=_transport(handler))
+    out = c.list_asset_version_groups("asset-1")
+    assert out[0]["version_number"] == 3
+
+
 def test_resolve_400_maps():
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"detail": "bad uri"})

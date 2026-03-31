@@ -8,7 +8,9 @@ from .cache_exceptions import CacheCorruptError, CacheError, CacheLockTimeoutErr
 from .client import ZenoClient, default_client
 from .entropy_segment import EntropyConfig
 from .omni_ingest import OmniIngestResult, ingest_omni_file, materialize_from_manifest_v3
+from .palette_catalog import build_asset_uri, filter_assets
 from .publisher import PublishChunkedResult, publish_chunked_file
+from .launch_context import LaunchContextV1, read_launch_context_from_environ, apply_api_base_url_to_environ
 from .exceptions import (
     BadRequest,
     BlobNotFound,
@@ -33,6 +35,18 @@ __version__ = "0.2.0"
 
 def resolve(uri: str):
     return default_client().resolve(uri)
+
+
+def list_projects(*, status: str | None = None, code: str | None = None):
+    return default_client().list_projects(status=status, code=code)
+
+
+def list_assets(project_id: str, *, code: str | None = None, type: str | None = None):
+    return default_client().list_assets(project_id, code=code, type=type)
+
+
+def list_asset_version_groups(asset_id: str):
+    return default_client().list_asset_version_groups(asset_id)
 
 
 def blob_exists(content_hash: str) -> bool:
@@ -122,6 +136,11 @@ def lock_status(*, project: str, asset: str, representation: str):
 __all__ = [
     "ZenoClient",
     "default_client",
+    "build_asset_uri",
+    "filter_assets",
+    "list_projects",
+    "list_assets",
+    "list_asset_version_groups",
     "compute_blake3",
     "compute_content_hash",
     "compute_sha256",
@@ -150,6 +169,9 @@ __all__ = [
     "LockHeldByOther",
     "LockNotFound",
     "LockNotOwned",
+    "LaunchContextV1",
+    "read_launch_context_from_environ",
+    "apply_api_base_url_to_environ",
     "RegisterContentNotFound",
     "RegisterVersionConflict",
 ]

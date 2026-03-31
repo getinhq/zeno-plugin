@@ -74,7 +74,8 @@ c.heartbeat(user_id="artist_01", session_id="dcc-session-uuid", metadata={"dcc":
 ## Layout
 
 - `zeno_client/` — shared library (resolve, upload_blob, register_version, session). Used by all plugins.
-- `maya/`, `houdini/`, `nuke/`, `blender/` — plugin placeholders (no implementation yet).
+- `blender_addon/chimera_zeno/` — Blender addon (load/publish + command palette with Ctrl+K).
+- `maya/`, `houdini/`, `nuke/`, `blender/` — legacy placeholders and DCC-specific helpers.
 
 ## Local cache (1.2)
 

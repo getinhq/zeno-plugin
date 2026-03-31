@@ -45,6 +45,47 @@ class ZenoClient:
             assert isinstance(data, dict)
             return data
 
+    # --- Catalog ---
+    def list_projects(self, *, status: str | None = None, code: str | None = None) -> list[dict[str, Any]]:
+        params: dict[str, str] = {}
+        if status is not None:
+            params["status"] = status
+        if code is not None:
+            params["code"] = code
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/projects"), params=params or None)
+            data = parse_json(resp, operation="list_projects")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
+    def list_assets(
+        self,
+        project_id: str,
+        *,
+        code: str | None = None,
+        type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, str] = {}
+        if code is not None:
+            params["code"] = code
+        if type is not None:
+            params["type"] = type
+        with self._client() as c:
+            resp = c.get(
+                _join(self.base_url, f"/api/v1/projects/{project_id}/assets"),
+                params=params or None,
+            )
+            data = parse_json(resp, operation="list_assets")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
+    def list_asset_version_groups(self, asset_id: str) -> list[dict[str, Any]]:
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, f"/api/v1/assets/{asset_id}/versions"))
+            data = parse_json(resp, operation="list_asset_version_groups")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
     def latest_content_id(
         self,
         *,
