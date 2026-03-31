@@ -15,7 +15,7 @@ from pathlib import Path
 
 import bpy
 
-from . import operators_load, operators_publish, palette, preferences, ui_menus
+from . import navigator, operators_load, operators_publish, palette, preferences, ui_menus
 from . import launch_context as launch_context_mod
 
 
@@ -37,6 +37,7 @@ def register() -> None:
     operators_load.register()
     operators_publish.register()
     palette.register()
+    navigator.register()
     ui_menus.register()
 
     wm = bpy.context.window_manager
@@ -53,6 +54,7 @@ def unregister() -> None:
     _addon_keymaps.clear()
 
     ui_menus.unregister()
+    navigator.unregister()
     palette.unregister()
     operators_publish.unregister()
     operators_load.unregister()
