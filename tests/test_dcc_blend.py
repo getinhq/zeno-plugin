@@ -207,8 +207,11 @@ class TestRegistry:
         result = canonicalize_file(f, dcc_hint="blender")
         assert result is not None
 
-    def test_maya_returns_none_phase2_not_implemented(self, tmp_path: Path):
+    def test_maya_ascii_is_canonicalized(self, tmp_path: Path):
         f = tmp_path / "scene.ma"
-        f.write_bytes(b'//Maya ASCII 2024\n')
-        # Maya canonicalization is Phase 2 — should return None for now
-        assert canonicalize_file(f) is None
+        f.write_bytes(b'//Maya ASCII 2024 scene\nfileInfo "os" "Linux";\n')
+        result = canonicalize_file(f)
+        assert result is not None
+        assert b"//Maya ASCII scene" in result
+        assert b"Linux" not in result
+        assert b"chimera.canonical" in result

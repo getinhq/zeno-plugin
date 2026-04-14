@@ -5,9 +5,9 @@ Routes a file path to the appropriate DCC canonicalizer based on extension.
 Returning None means "no canonicalization supported" — callers fall back to
 the existing raw-bytes pipeline with zero behaviour change.
 
-Adding a new DCC (Phase 2+):
+Adding a new DCC:
   1. Create {dcc}/canonicalize.py with a `canonicalize(raw_bytes) -> bytes` function
-  2. Add the extension mapping below
+  2. Add the extension mapping below (see Blender + Maya ASCII for examples)
 """
 from __future__ import annotations
 
@@ -36,10 +36,17 @@ def canonicalize_file(path: str | Path, dcc_hint: str | None = None) -> bytes | 
         from blender.canonicalize import canonicalize
         return canonicalize(p.read_bytes())
 
-    # ── Maya (Phase 2) ───────────────────────────────────────────────────────
-    # if ext in (".ma", ".mb") or hint == "maya":
-    #     from maya.canonicalize import canonicalize
-    #     return canonicalize(p.read_bytes())
+    # ── Maya (ASCII only for now; .mb is binary — no canonicalizer yet) ────
+    if ext == ".ma":
+        from maya.canonicalize import canonicalize
+
+        return canonicalize(p.read_bytes())
+
+    # ── OpenUSD ───────────────────────────────────────────────────────────────
+    if ext in (".usd", ".usda", ".usdc", ".usdz") or hint == "usd":
+        from usd.canonicalize import canonicalize
+
+        return canonicalize(p.read_bytes())
 
     # ── Houdini (Phase 3) ────────────────────────────────────────────────────
     # if ext in (".hip", ".hipnc") or hint == "houdini":

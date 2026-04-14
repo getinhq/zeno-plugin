@@ -8,24 +8,6 @@ from .bridge import addon_prefs, filter_assets, make_client
 from . import launch_context as launch_context_mod
 
 
-def _asset_items(self, context):  # pragma: no cover - Blender runtime
-    items = []
-    for a in self._assets:
-        aid = str(a.get("id") or "")
-        code = str(a.get("code") or "")
-        name = str(a.get("name") or "")
-        items.append((aid, f"{code}  {name}".strip(), aid))
-    return items or [("", "No assets", "No assets found")]
-
-
-def _version_items(self, context):  # pragma: no cover - Blender runtime
-    items = [("latest", "latest", "Resolve latest version")]
-    for v in self._versions:
-        sv = str(v)
-        items.append((sv, sv, f"Version {sv}"))
-    return items
-
-
 class CHIMERA_OT_palette_open(bpy.types.Operator):
     bl_idname = "chimera.palette_open"
     bl_label = "Chimera Command Palette"
@@ -42,15 +24,23 @@ class CHIMERA_OT_palette_open(bpy.types.Operator):
         ),
         default="load",
     )
-    asset_id: bpy.props.EnumProperty(name="Asset", items=_asset_items)
-    version: bpy.props.EnumProperty(name="Version", items=_version_items)
+    asset_code: bpy.props.StringProperty(name="Asset Code", default="", options={"SKIP_SAVE"})
+    version: bpy.props.StringProperty(name="Version", default="latest", options={"SKIP_SAVE"})
 
     _assets: list[dict[str, Any]] = []
     _versions: list[int] = []
 
+    def _sanitize_values(self) -> None:
+        valid_codes = [str(a.get("code") or "").strip() for a in self._assets if str(a.get("code") or "").strip()]
+        if valid_codes and self.asset_code.strip() not in valid_codes:
+            self.asset_code = valid_codes[0]
+        if not self.version or not str(self.version).strip():
+            self.version = "latest"
+        self.version = str(self.version).strip() or "latest"
+
     def _find_asset(self) -> dict[str, Any] | None:
         for a in self._assets:
-            if str(a.get("id")) == self.asset_id:
+            if str(a.get("code") or "").strip() == self.asset_code.strip():
                 return a
         return None
 
@@ -64,12 +54,10 @@ class CHIMERA_OT_palette_open(bpy.types.Operator):
         pid = str(projects[0].get("id") or "")
         assets = c.list_assets(pid)
         self._assets = filter_assets(assets, self.query)
+        self._sanitize_values()
         if not self._assets:
-            self.asset_id = ""
             self._versions = []
             return
-        if not self.asset_id:
-            self.asset_id = str(self._assets[0].get("id") or "")
         asset = self._find_asset()
         if not asset:
             self._versions = []
@@ -83,9 +71,7 @@ class CHIMERA_OT_palette_open(bpy.types.Operator):
                 pass
         nums.sort(reverse=True)
         self._versions = nums
-        if self.version != "latest" and self.version:
-            return
-        self.version = str(nums[0]) if nums else "latest"
+        self._sanitize_values()
 
     def invoke(self, context, event):  # pragma: no cover - Blender runtime
         prefs = addon_prefs()
@@ -105,6 +91,8 @@ class CHIMERA_OT_palette_open(bpy.types.Operator):
                     pass
         self.query = self.query.strip()
         try:
+            self._assets = []
+            self._versions = []
             self._refresh()
         except Exception:
             self._assets = []
@@ -130,7 +118,7 @@ class CHIMERA_OT_palette_open(bpy.types.Operator):
                     version="next",
                     representation="blend",
                 )
-            version = self.version or "latest"
+            version = (self.version or "latest").strip() or "latest"
             return bpy.ops.chimera.load_asset(
                 "INVOKE_DEFAULT",
                 project=self.project,
@@ -143,13 +131,21 @@ class CHIMERA_OT_palette_open(bpy.types.Operator):
             return {"CANCELLED"}
 
     def draw(self, context):  # pragma: no cover - Blender runtime
+        try:
+            self._sanitize_values()
+        except Exception:
+            pass
         col = self.layout.column(align=True)
         col.prop(self, "project")
         col.prop(self, "query")
         col.prop(self, "action")
-        col.prop(self, "asset_id")
+        col.prop(self, "asset_code")
         col.prop(self, "version")
         col.operator("chimera.palette_refresh", text="Refresh Results")
+        if self._assets:
+            preview = ", ".join(str(a.get("code") or "") for a in self._assets[:8] if str(a.get("code") or "").strip())
+            if preview:
+                col.label(text="Assets: " + preview)
         if self._versions:
             col.label(text="Known versions: " + ", ".join(str(v) for v in self._versions[:8]))
 

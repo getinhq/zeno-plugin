@@ -94,6 +94,65 @@ class LocalCache:
             self._touch_index(cid, fname, rel_path, final_path)
             return final_path
 
+        with file_lock(lock_path, timeout_s=self.config.lock_timeout_s):
+            if self._is_valid_hit(final_path, cid, size=size):
+                self._touch_index(cid, fname, rel_path, final_path)
+                return final_path
+
+            content_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = final_path.with_suffix(final_path.suffix + ".download.tmp")
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+
+            client.get_blob(cid, tmp_path)
+
+            if self.config.verify_size and size is not None:
+                st = tmp_path.stat().st_size
+                if int(st) != int(size):
+                    try:
+                        tmp_path.unlink()
+                    except OSError:
+                        pass
+                    raise CacheCorruptError(
+                        f"Downloaded size mismatch for {cid[:12]}…: expected {size}, got {st}",
+                        content_id=cid,
+                    )
+            if self.config.should_verify_hash():
+                got = compute_content_hash(tmp_path)
+                if got != cid:
+                    try:
+                        tmp_path.unlink()
+                    except OSError:
+                        pass
+                    raise CacheCorruptError(
+                        f"Downloaded hash mismatch for {cid[:12]}…: expected {cid[:12]}…, got {got[:12]}…",
+                        content_id=cid,
+                    )
+
+            try:
+                if final_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except OSError:
+                        pass
+                else:
+                    tmp_path.replace(final_path)
+            except OSError:
+                try:
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                except OSError:
+                    pass
+                raise
+
+            self._touch_index(cid, fname, rel_path, final_path)
+            self.evict_if_needed(exclude_content_ids={cid})
+
+            return final_path
+
     def _ensure_from_manifest(self, *, manifest_id: str, client: ZenoClient) -> Path:
         mid = manifest_id.strip().lower()
         manifests_dir = self.config.root_dir / "manifests"
@@ -233,72 +292,6 @@ class LocalCache:
             self._touch_index(whole, out_path.name, rel_path, out_path)
             self.evict_if_needed(exclude_content_ids={whole})
             return out_path
-
-        with file_lock(lock_path, timeout_s=self.config.lock_timeout_s):
-            # Re-check after acquiring lock (another process may have filled it)
-            if self._is_valid_hit(final_path, cid, size=size):
-                self._touch_index(cid, fname, rel_path, final_path)
-                return final_path
-
-            content_dir.mkdir(parents=True, exist_ok=True)
-            tmp_path = final_path.with_suffix(final_path.suffix + ".download.tmp")
-            if tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except OSError:
-                    pass
-
-            # Download to tmp (ZenoClient writes via its own tmp file; we then verify and move)
-            client.get_blob(cid, tmp_path)
-
-            # Verify size/hash before exposing
-            if self.config.verify_size and size is not None:
-                st = tmp_path.stat().st_size
-                if int(st) != int(size):
-                    try:
-                        tmp_path.unlink()
-                    except OSError:
-                        pass
-                    raise CacheCorruptError(
-                        f"Downloaded size mismatch for {cid[:12]}…: expected {size}, got {st}",
-                        content_id=cid,
-                    )
-            if self.config.should_verify_hash():
-                got = compute_content_hash(tmp_path)
-                if got != cid:
-                    try:
-                        tmp_path.unlink()
-                    except OSError:
-                        pass
-                    raise CacheCorruptError(
-                        f"Downloaded hash mismatch for {cid[:12]}…: expected {cid[:12]}…, got {got[:12]}…",
-                        content_id=cid,
-                    )
-
-            # Atomic move into place (if another process managed to create it between download and move,
-            # keep the existing file and delete our tmp)
-            try:
-                if final_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except OSError:
-                        pass
-                else:
-                    tmp_path.replace(final_path)
-            except OSError:
-                # If replace fails for any reason, clean up tmp and re-raise
-                try:
-                    if tmp_path.exists():
-                        tmp_path.unlink()
-                except OSError:
-                    pass
-                raise
-
-            # Update index and evict
-            self._touch_index(cid, fname, rel_path, final_path)
-            self.evict_if_needed(exclude_content_ids={cid})
-
-            return final_path
 
     def _ensure_raw_blob_from_bytes(self, *, content_id: str, filename: str, size: int | None, body: bytes) -> Path:
         cid = content_id.strip().lower()

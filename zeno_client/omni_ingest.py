@@ -50,7 +50,13 @@ def _scan_entropy_bytes(data: bytes, cfg: "EntropyConfig | None" = None) -> list
         os.unlink(tmp_path)
 
 
-def _iter_chunks_from_bytes(data: bytes, base_offset: int, cfg: "ChunkingConfig") -> list:
+def _iter_chunks_from_bytes(
+    data: bytes,
+    base_offset: int,
+    cfg: "ChunkingConfig",
+    *,
+    forced_cuts: set[int] | None = None,
+) -> list:
     """Chunk an in-memory byte buffer, returning Chunk objects with absolute offsets."""
     import tempfile, os
     from .chunking import iter_chunks_in_range
@@ -58,13 +64,16 @@ def _iter_chunks_from_bytes(data: bytes, base_offset: int, cfg: "ChunkingConfig"
         tmp.write(data)
         tmp_path = tmp.name
     try:
-        return list(iter_chunks_in_range(tmp_path, start=0, length=len(data), cfg=cfg,
-                                         base_offset=base_offset))
-    except TypeError:
-        # Fallback: iter_chunks_in_range without base_offset — patch offsets manually
-        chunks = list(iter_chunks_in_range(tmp_path, start=0, length=len(data), cfg=cfg))
-        from .chunking import Chunk
-        return [Chunk(offset=c.offset + base_offset, size=c.size, content_hash=c.content_hash) for c in chunks]
+        return list(
+            iter_chunks_in_range(
+                tmp_path,
+                start=0,
+                length=len(data),
+                cfg=cfg,
+                base_offset=base_offset,
+                forced_cuts=forced_cuts,
+            )
+        )
     finally:
         os.unlink(tmp_path)
 
@@ -151,6 +160,22 @@ def ingest_omni_file(
     else:
         segments = scan_entropy_segments(p, entropy_cfg)
 
+    forced_cuts_all: set[int] = set()
+    if dcc_canonical and (dcc or "").strip().lower() == "maya":
+        try:
+            import os
+            from maya.canonicalize import extract_semantic_anchors
+            enable_forced_cuts = str(os.environ.get("CHIMERA_MA_FORCED_CUTS", "1")).strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            if enable_forced_cuts:
+                forced_cuts_all = set(extract_semantic_anchors(chunk_source))
+        except Exception:
+            forced_cuts_all = set()
+
     parent_bytes_all: bytes | None = None
     if parent_local_path:
         pp = Path(parent_local_path)
@@ -176,7 +201,8 @@ def ingest_omni_file(
             # Chunk the canonical/raw buffer for this segment
             seg_bytes = chunk_source[seg.start:seg.end]
             offset = seg.start
-            for ch in _iter_chunks_from_bytes(seg_bytes, offset, chunking):
+            seg_forced_cuts = {fc for fc in forced_cuts_all if seg.start < fc <= seg.end}
+            for ch in _iter_chunks_from_bytes(seg_bytes, offset, chunking, forced_cuts=seg_forced_cuts):
                 chunks.append(ch)
                 if not client.blob_exists(ch.content_hash):
                     body = chunk_source[ch.offset:ch.offset + ch.size]
@@ -196,7 +222,8 @@ def ingest_omni_file(
         patch_payload = _high_entropy_patch(new_bytes=new_bytes, parent_bytes=parent_segment)
         if patch_payload is None:
             seg_bytes = chunk_source[seg.start:seg.end]
-            for ch in _iter_chunks_from_bytes(seg_bytes, seg.start, chunking):
+            seg_forced_cuts = {fc for fc in forced_cuts_all if seg.start < fc <= seg.end}
+            for ch in _iter_chunks_from_bytes(seg_bytes, seg.start, chunking, forced_cuts=seg_forced_cuts):
                 chunks.append(ch)
                 if not client.blob_exists(ch.content_hash):
                     body = chunk_source[ch.offset:ch.offset + ch.size]

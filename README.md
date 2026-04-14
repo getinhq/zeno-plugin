@@ -74,8 +74,8 @@ c.heartbeat(user_id="artist_01", session_id="dcc-session-uuid", metadata={"dcc":
 ## Layout
 
 - `zeno_client/` — shared library (resolve, upload_blob, register_version, session). Used by all plugins.
-- `blender_addon/chimera_zeno/` — Blender addon (load/publish + command palette with Ctrl+K).
-- `maya/`, `houdini/`, `nuke/`, `blender/` — legacy placeholders and DCC-specific helpers.
+- `blender/chimera_zeno/` — Blender addon (load/publish + command palette with Ctrl+K).
+- `maya/`, `houdini/`, `nuke/`, `blender/` — DCC-specific helpers (`blender/` also hosts `chimera_zeno`).
 
 ## Local cache (1.2)
 
@@ -137,6 +137,36 @@ Cache behavior:
   - download any missing chunks into `~/.chimera/cache/chunks/<prefix>/<hash>`
   - assemble into `~/.chimera/cache/<whole_file_blake3>/<filename>`
   - verify assembled file BLAKE3 equals `whole_file_blake3`
+
+## Maya ASCII canonicalization flags
+
+Maya `.ma` canonicalization supports staged hardening flags:
+
+- `CHIMERA_MA_FLOAT_QUANTIZE=1`
+  - Enables precision-safe float quantization for dense numeric `setAttr` payloads.
+- `CHIMERA_MA_FLOAT_DECIMALS=5`
+  - Decimal precision for quantization (used when `CHIMERA_MA_FLOAT_QUANTIZE=1`).
+- `CHIMERA_MA_PLUGIN_PAYLOAD_NORMALIZE=1`
+  - Neutralizes known volatile plugin payload storage strings (allowlisted types only).
+- `CHIMERA_MA_FORCED_CUTS=1`
+  - Enables Maya semantic anchor-guided chunk boundaries in Omni ingest.
+
+Recommended rollout:
+
+1. Enable quantization + plugin payload normalization in dev/staging.
+2. Validate opens/publishes for representative rigs/animation scenes.
+3. Enable forced cuts in staging and compare dedup metrics.
+
+### Maya dedup benchmark helper
+
+Use the benchmark script to compare two `.ma` versions with canonicalization + CDC:
+
+```bash
+python scripts/ma_dedup_benchmark.py \
+  --left /path/to/v001.ma \
+  --right /path/to/v002.ma \
+  --avg 1048576 --min 262144 --max 4194304
+```
 
 ## CDC benchmark harness
 

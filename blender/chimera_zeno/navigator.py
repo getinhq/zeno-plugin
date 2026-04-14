@@ -61,7 +61,10 @@ def _apply_launch_context_defaults(context) -> None:  # pragma: no cover - Blend
     pid = str(hint.get("project_id") or "")
     pcode = str(hint.get("project_code") or "")
     if pid and pcode:
-        scene.zeno_nav_project = f"{pid}|{pcode}"
+        target = f"{pid}|{pcode}"
+        valid = {item[0] for item in _project_items(None, context)}
+        if target in valid:
+            scene.zeno_nav_project = target
 
 
 class ZENO_OT_navigator_open(bpy.types.Operator):
@@ -120,10 +123,12 @@ def register() -> None:
     bpy.types.Scene.zeno_nav_project = bpy.props.EnumProperty(
         name="Project",
         items=_project_items,
+        options={"SKIP_SAVE"},
     )
     bpy.types.Scene.zeno_nav_asset = bpy.props.EnumProperty(
         name="Asset",
         items=_asset_items,
+        options={"SKIP_SAVE"},
     )
     bpy.utils.register_class(ZENO_OT_navigator_open)
     bpy.utils.register_class(ZENO_PT_navigator)

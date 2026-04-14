@@ -58,7 +58,7 @@ def publish_chunked_file(
         dcc: Optional DCC name (e.g. "blender"). When set, the file is
              pre-canonicalized (DCC-specific volatility stripped) before
              chunking, producing significantly higher deduplication rates.
-             Supported: "blender". Coming soon: "maya", "houdini", "unreal".
+             Supported: "blender", "maya" (Maya ASCII ``.ma`` only). Coming soon: more DCCs.
     """
     p = Path(path)
     chunking = chunking or ChunkingConfig()

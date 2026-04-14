@@ -1,5 +1,7 @@
 # Chimera Blender Addon
 
+Repo layout: `zeno-plugin/blender/chimera_zeno/` (sibling to `canonicalize.py`).
+
 Install path:
 
 1. In Blender: **Edit > Preferences > Add-ons > Install...**

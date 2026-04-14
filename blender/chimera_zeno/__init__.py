@@ -15,10 +15,6 @@ from pathlib import Path
 
 import bpy
 
-from . import navigator, operators_load, operators_publish, palette, preferences, ui_menus
-from . import launch_context as launch_context_mod
-
-
 _addon_keymaps: list[tuple[object, object]] = []
 
 
@@ -30,8 +26,13 @@ def _ensure_zeno_client_on_path() -> None:
         sys.path.insert(0, str(root))
 
 
+_ensure_zeno_client_on_path()
+
+from . import launch_context as launch_context_mod
+from . import navigator, operators_load, operators_publish, palette, preferences, ui_menus
+
+
 def register() -> None:
-    _ensure_zeno_client_on_path()
     launch_context_mod.register_launch_context_prefs()
     preferences.register()
     operators_load.register()

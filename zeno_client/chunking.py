@@ -55,7 +55,12 @@ def _normalize_masks(avg: int) -> tuple[int, int]:
     return mask_small, mask_large
 
 
-def iter_chunks(path: str | Path, cfg: ChunkingConfig | None = None) -> Iterator[Chunk]:
+def iter_chunks(
+    path: str | Path,
+    cfg: ChunkingConfig | None = None,
+    *,
+    forced_cuts: set[int] | None = None,
+) -> Iterator[Chunk]:
     """
     Content-defined chunking (FastCDC-like gear hash).
 
@@ -83,7 +88,14 @@ def iter_chunks(path: str | Path, cfg: ChunkingConfig | None = None) -> Iterator
             if not buf:
                 break
 
-            cut = _find_cut(buf, cfg.min, cfg.max, mask_small, mask_large)
+            cut = _find_cut(
+                buf,
+                cfg.min,
+                cfg.max,
+                mask_small,
+                mask_large,
+                forced_cuts={fc - offset for fc in (forced_cuts or set()) if offset < fc <= (offset + len(buf))},
+            )
             chunk_bytes = buf[:cut]
 
             h = blake3(chunk_bytes).hexdigest()
@@ -102,6 +114,8 @@ def iter_chunks_in_range(
     start: int,
     length: int,
     cfg: ChunkingConfig | None = None,
+    base_offset: int = 0,
+    forced_cuts: set[int] | None = None,
 ) -> Iterator[Chunk]:
     """
     Chunk only a byte-range within a file, preserving absolute offsets.
@@ -123,10 +137,22 @@ def iter_chunks_in_range(
             buf = f.read(target_max)
             if not buf:
                 break
-            cut = _find_cut(buf, cfg.min, cfg.max, mask_small, mask_large)
+            absolute_window_start = offset + base_offset
+            cut = _find_cut(
+                buf,
+                cfg.min,
+                cfg.max,
+                mask_small,
+                mask_large,
+                forced_cuts={
+                    fc - absolute_window_start
+                    for fc in (forced_cuts or set())
+                    if absolute_window_start < fc <= (absolute_window_start + len(buf))
+                },
+            )
             chunk_bytes = buf[:cut]
             h = blake3(chunk_bytes).hexdigest()
-            yield Chunk(offset=offset, size=cut, content_hash=h)
+            yield Chunk(offset=offset + base_offset, size=cut, content_hash=h)
             tail = len(buf) - cut
             if tail:
                 f.seek(-tail, 1)
@@ -139,6 +165,7 @@ def _find_cut(
     max_size: int,
     mask_small: int,
     mask_large: int,
+    forced_cuts: set[int] | None = None,
 ) -> int:
     """
     Pick a cut point in buf. Returns cut length (1..len(buf)).
@@ -154,6 +181,12 @@ def _find_cut(
         return n
 
     mid = min(n, (min_size + max_size) // 2)
+    forced = forced_cuts or set()
+    candidate_forced = [c for c in forced if min_size <= c <= n]
+    if candidate_forced:
+        forced_cut = min(candidate_forced)
+        if forced_cut > 0:
+            return forced_cut
     h = 0
 
     # Phase 1: min..mid with mask_small
@@ -172,6 +205,11 @@ def _find_cut(
     return n
 
 
-def chunk_file(path: str | Path, cfg: ChunkingConfig | None = None) -> list[Chunk]:
-    return list(iter_chunks(path, cfg=cfg))
+def chunk_file(
+    path: str | Path,
+    cfg: ChunkingConfig | None = None,
+    *,
+    forced_cuts: set[int] | None = None,
+) -> list[Chunk]:
+    return list(iter_chunks(path, cfg=cfg, forced_cuts=forced_cuts))
 
