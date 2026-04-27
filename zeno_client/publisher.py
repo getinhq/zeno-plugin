@@ -46,6 +46,8 @@ def publish_chunked_file(
     parent_local_path: str | Path | None = None,
     entropy: EntropyConfig | None = None,
     dcc: str | None = None,
+    pipeline_stage: str = "",
+    task_id: str | None = None,
 ) -> PublishChunkedResult:
     """
     Publish a file using client-side CDC chunking.
@@ -118,6 +120,8 @@ def publish_chunked_file(
                 filename=fname,
                 size=size_bytes,
                 metadata=meta,
+                pipeline_stage=pipeline_stage,
+                task_id=task_id,
             )
             return PublishChunkedResult(
                 manifest_id=omni.manifest_id,
@@ -136,6 +140,8 @@ def publish_chunked_file(
             content_id=omni.manifest_id,
             filename=fname,
             size=size_bytes,
+            pipeline_stage=pipeline_stage,
+            task_id=task_id,
         )
         return PublishChunkedResult(
             manifest_id=omni.manifest_id,
@@ -182,6 +188,8 @@ def publish_chunked_file(
         content_id=mid,
         filename=fname,
         size=size_bytes,
+        pipeline_stage=pipeline_stage,
+        task_id=task_id,
     )
 
     return PublishChunkedResult(

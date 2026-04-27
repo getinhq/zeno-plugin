@@ -29,12 +29,35 @@ def _ensure_zeno_client_on_path() -> None:
 _ensure_zeno_client_on_path()
 
 from . import launch_context as launch_context_mod
-from . import navigator, operators_load, operators_publish, palette, preferences, ui_menus
+from . import (
+    diagnostics_op,
+    navigator,
+    operators_load,
+    operators_publish,
+    palette,
+    preferences,
+    ui_menus,
+)
+from . import qt_host as _qt_host
 
 
 def register() -> None:
+    # NOTE: the previous ``register()`` eagerly patched sys.path for PySide
+    # discovery *and* ran ``importlib.util.find_spec("PySide6")`` here. Both
+    # operations have a non-trivial first-call cost (the find_spec walks
+    # every path entry and invalidate_caches slows every subsequent cold
+    # import for the rest of the Blender session). Users reported Blender
+    # feeling sluggish the moment the addon loaded — that's this probe.
+    #
+    # ``_load_dialog_classes`` inside ``blender_qt`` already runs the same
+    # probe (and sys.path patch) on first palette click. Doing it again at
+    # register time is pure startup tax, so we skip it here. The one-liner
+    # log used to confirm PySide was importable is now emitted only when
+    # the user opens the palette.
+
     launch_context_mod.register_launch_context_prefs()
     preferences.register()
+    diagnostics_op.register()
     operators_load.register()
     operators_publish.register()
     palette.register()
@@ -54,10 +77,13 @@ def unregister() -> None:
         km.keymap_items.remove(kmi)
     _addon_keymaps.clear()
 
+    _qt_host.shutdown_qt_runtime()
+
     ui_menus.unregister()
     navigator.unregister()
     palette.unregister()
     operators_publish.unregister()
     operators_load.unregister()
+    diagnostics_op.unregister()
     preferences.unregister()
 

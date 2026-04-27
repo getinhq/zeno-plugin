@@ -1,0 +1,170 @@
+/* Zeno dashboard-aligned Qt theme (theme.json drives color and font tokens) */
+
+* {
+    font-family: {font.family};
+    font-size: {font.size-pt}pt;
+    outline: none;
+    icon-size: 16px;
+}
+
+QWidget {
+    color: {color.foreground};
+    background: {color.background};
+}
+
+QDialog, QMainWindow {
+    background: {color.background};
+}
+
+QLabel {
+    background: transparent;
+    color: {color.foreground};
+}
+
+QGroupBox {
+    border: 1px solid {color.border};
+    border-radius: 4px;
+    margin-top: 8px;
+    padding-top: 8px;
+    font-weight: bold;
+    color: {color.muted};
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+}
+
+QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox {
+    border: 1px solid {color.input-border};
+    border-radius: 4px;
+    background: {color.input-bg};
+    color: {color.foreground};
+    padding: 4px 8px;
+    selection-background-color: {color.selection-bg};
+    selection-color: {color.selection-text};
+}
+
+QLineEdit:focus, QPlainTextEdit:focus {
+    border-color: {color.primary};
+}
+
+QComboBox {
+    border: 1px solid {color.border};
+    border-radius: 4px;
+    background: {color.card};
+    color: {color.foreground};
+    padding: 4px 8px;
+    min-height: 1.2em;
+}
+
+QComboBox:hover {
+    background: {color.card-hover};
+    border-color: {color.muted};
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox QAbstractItemView {
+    background: {color.card};
+    color: {color.foreground};
+    border: 1px solid {color.border};
+    selection-background-color: {color.selection-bg};
+    selection-color: {color.selection-text};
+}
+
+QPushButton {
+    border: 1px solid {color.border};
+    border-radius: 4px;
+    background: {color.card};
+    color: {color.foreground};
+    padding: 6px 14px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background: {color.card-hover};
+    border-color: {color.muted};
+}
+
+QPushButton:pressed {
+    background: {color.card};
+}
+
+QPushButton#primaryButton, QPushButton[primary="true"] {
+    background: {color.primary};
+    color: {color.primary-foreground};
+    border-color: {color.primary};
+}
+
+QPushButton#primaryButton:hover, QPushButton[primary="true"]:hover {
+    background: #e5ff4d;
+    color: {color.primary-foreground};
+}
+
+QScrollBar:vertical {
+    background: {color.scrollbar-track};
+    width: 8px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: {color.scrollbar-thumb};
+    min-height: 24px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: {color.scrollbar-thumb-hover};
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollBar:horizontal {
+    background: {color.scrollbar-track};
+    height: 8px;
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    background: {color.scrollbar-thumb};
+    min-width: 24px;
+    border-radius: 4px;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+
+QListWidget {
+    background: {color.card};
+    border: 1px solid {color.border};
+    border-radius: 4px;
+    color: {color.foreground};
+}
+
+QListWidget::item {
+    padding: 6px 8px;
+}
+
+QListWidget::item:selected {
+    background: {color.selection-bg};
+    color: {color.foreground};
+}
+
+QListWidget::item:hover {
+    background: {color.card-hover};
+}
+
+QFrame#lineAccent {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {color.primary}, stop:1 transparent);
+    max-width: 4px;
+    min-width: 4px;
+    border: none;
+}

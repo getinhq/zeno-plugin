@@ -86,6 +86,46 @@ class ZenoClient:
             assert isinstance(data, list)
             return [d for d in data if isinstance(d, dict)]
 
+    def list_my_tasks(self, *, project_id: str | None = None) -> list[dict[str, Any]]:
+        params: dict[str, str] = {}
+        if project_id:
+            params["project_id"] = project_id
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/tasks/mine"), params=params or None)
+            data = parse_json(resp, operation="list_my_tasks")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
+    def list_tasks(
+        self,
+        *,
+        project_id: str | None = None,
+        asset_id: str | None = None,
+        shot_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, str] = {}
+        if project_id:
+            params["project_id"] = project_id
+        if asset_id:
+            params["asset_id"] = asset_id
+        if shot_id:
+            params["shot_id"] = shot_id
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/tasks"), params=params or None)
+            data = parse_json(resp, operation="list_tasks")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
+    def list_users(self, *, is_active: bool | None = None) -> list[dict[str, Any]]:
+        params: dict[str, str] = {}
+        if is_active is not None:
+            params["is_active"] = str(bool(is_active)).lower()
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/users"), params=params or None)
+            data = parse_json(resp, operation="list_users")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
     def latest_content_id(
         self,
         *,
@@ -217,6 +257,8 @@ class ZenoClient:
         filename: str | None = None,
         size: int | None = None,
         metadata: dict[str, Any] | None = None,
+        pipeline_stage: str = "",
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "project": project,
@@ -231,6 +273,15 @@ class ZenoClient:
             body["size"] = size
         if metadata is not None:
             body["metadata"] = metadata
+        # pipeline_stage routes the publish into the dashboard's per-stage
+        # feed (modelling/texturing/rigging/lookdev). Empty string = legacy
+        # global bucket; omitting the key entirely has the same effect on
+        # the API side so we only send it when explicitly set.
+        stage = (pipeline_stage or "").strip().lower()
+        if stage:
+            body["pipeline_stage"] = stage
+        if task_id:
+            body["task_id"] = str(task_id).strip()
         with self._client() as c:
             resp = c.post(_join(self.base_url, "/api/v1/versions"), json=body)
             data = parse_json(resp, operation="register_version")

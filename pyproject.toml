@@ -16,6 +16,19 @@ dependencies = [
 test = [
   "pytest",
 ]
+ui = [
+  "qtpy>=2.4",
+]
+hub = [
+  "qtpy>=2.4",
+  "PySide6>=6.6",
+]
+
+[project.scripts]
+chimera-hub = "chimera_hub.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["zeno_client*"]
+include = ["zeno_client*", "zeno_ui*", "chimera_zeno_maya*", "chimera_hub*", "zeno_thin*"]
+
+[tool.setuptools.package-data]
+zeno_ui = ["theme.json", "styles/*.qss"]
