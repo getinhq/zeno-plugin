@@ -42,7 +42,7 @@ def _report(operator: Any, level: str, message: str) -> None:
         pass
 
 
-def _load_dialog_classes(operator: Any) -> tuple[Any, Any] | None:
+def _load_dialog_classes(operator: Any) -> tuple[Any, Any, Any, Any, Any, Any] | None:
     # Opportunistically patch sys.path *before* the import check — if PySide6
     # was installed via ``--user`` earlier and Blender's user-site is off,
     # this is what makes it importable.
@@ -80,6 +80,12 @@ def _load_dialog_classes(operator: Any) -> tuple[Any, Any] | None:
         return None
 
     try:
+        from zeno_ui.action_dialogs import (
+            ZenoNavigatorActionDialog,
+            ZenoPublisherDialog,
+            ZenoReportIssueDialog,
+            ZenoVersionSwitcherDialog,
+        )
         from zeno_ui.qt_dialogs import ZenoNavigatorDialog, ZenoPaletteDialog
     except Exception as exc:
         _report(
@@ -94,7 +100,14 @@ def _load_dialog_classes(operator: Any) -> tuple[Any, Any] | None:
 
         traceback.print_exc()
         return None
-    return ZenoNavigatorDialog, ZenoPaletteDialog
+    return (
+        ZenoNavigatorDialog,
+        ZenoPaletteDialog,
+        ZenoNavigatorActionDialog,
+        ZenoVersionSwitcherDialog,
+        ZenoReportIssueDialog,
+        ZenoPublisherDialog,
+    )
 
 
 def _run_operator_on_main_thread(
@@ -249,12 +262,21 @@ def _queued_publish(
     return op_result
 
 
+def _queued_report_issue(*, client: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    issue = client.create_issue(payload)
+    issue_id = str(issue.get("id") or "").strip()
+    attachment_path = str(payload.get("attachment_path") or "").strip()
+    if issue_id and attachment_path:
+        client.upload_issue_attachment(issue_id=issue_id, file_path=attachment_path)
+    return issue
+
+
 def show_command_palette_qt(operator: Any | None = None) -> bool:
     """Show ``ZenoPaletteDialog`` non-modally. Returns False if Qt is unavailable."""
     classes = _load_dialog_classes(operator)
     if classes is None:
         return False
-    _, ZenoPaletteDialog = classes
+    _, ZenoPaletteDialog, *_rest = classes
 
     app, err = qt_host.ensure_qt_runtime()
     if app is None:
@@ -290,7 +312,7 @@ def show_navigator_qt(operator: Any | None = None) -> bool:
     classes = _load_dialog_classes(operator)
     if classes is None:
         return False
-    ZenoNavigatorDialog, _ = classes
+    ZenoNavigatorDialog, _palette, *_rest = classes
 
     app, err = qt_host.ensure_qt_runtime()
     if app is None:
@@ -314,4 +336,129 @@ def show_navigator_qt(operator: Any | None = None) -> bool:
     return True
 
 
-__all__ = ["show_command_palette_qt", "show_navigator_qt"]
+def show_navigator_action_qt(operator: Any | None = None) -> bool:
+    classes = _load_dialog_classes(operator)
+    if classes is None:
+        return False
+    _, _, ZenoNavigatorActionDialog, *_rest = classes
+
+    app, err = qt_host.ensure_qt_runtime()
+    if app is None:
+        _report(operator, "WARNING", err or "Qt runtime unavailable.")
+        return False
+    try:
+        prefs = addon_prefs()
+        prefs_default = (prefs.default_project if prefs else "") or ""
+        hint = launch_context_mod.get_session_launch_hint()
+        dlg = ZenoNavigatorActionDialog(
+            client=make_client(),
+            parent=None,
+            launch_hint=hint,
+            prefs_default_project=prefs_default,
+            on_load_entity=_queued_load,
+            stay_on_top=True,
+        )
+        qt_host.retain_dialog(dlg)
+        dlg.show_non_modal()
+    except Exception as exc:
+        _report(operator, "WARNING", f"Navigator UI failed to open: {exc}")
+        return False
+    return True
+
+
+def show_version_switcher_qt(operator: Any | None = None) -> bool:
+    classes = _load_dialog_classes(operator)
+    if classes is None:
+        return False
+    _, _, _nav, ZenoVersionSwitcherDialog, *_rest = classes
+    app, err = qt_host.ensure_qt_runtime()
+    if app is None:
+        _report(operator, "WARNING", err or "Qt runtime unavailable.")
+        return False
+    try:
+        prefs = addon_prefs()
+        prefs_default = (prefs.default_project if prefs else "") or ""
+        hint = launch_context_mod.get_session_launch_hint()
+        dlg = ZenoVersionSwitcherDialog(
+            client=make_client(),
+            parent=None,
+            launch_hint=hint,
+            prefs_default_project=prefs_default,
+            on_switch_version=_queued_load,
+            stay_on_top=True,
+        )
+        qt_host.retain_dialog(dlg)
+        dlg.show_non_modal()
+    except Exception as exc:
+        _report(operator, "WARNING", f"Version Switcher UI failed to open: {exc}")
+        return False
+    return True
+
+
+def show_report_issue_qt(operator: Any | None = None) -> bool:
+    classes = _load_dialog_classes(operator)
+    if classes is None:
+        return False
+    _, _, _nav, _switch, ZenoReportIssueDialog, *_rest = classes
+    app, err = qt_host.ensure_qt_runtime()
+    if app is None:
+        _report(operator, "WARNING", err or "Qt runtime unavailable.")
+        return False
+    try:
+        prefs = addon_prefs()
+        prefs_default = (prefs.default_project if prefs else "") or ""
+        hint = launch_context_mod.get_session_launch_hint()
+        client = make_client()
+        dlg = ZenoReportIssueDialog(
+            client=client,
+            parent=None,
+            launch_hint=hint,
+            prefs_default_project=prefs_default,
+            on_raise_ticket=lambda payload: _queued_report_issue(client=client, payload=payload),
+            stay_on_top=True,
+        )
+        qt_host.retain_dialog(dlg)
+        dlg.show_non_modal()
+    except Exception as exc:
+        _report(operator, "WARNING", f"Report Issue UI failed to open: {exc}")
+        return False
+    return True
+
+
+def show_publisher_qt(operator: Any | None = None) -> bool:
+    classes = _load_dialog_classes(operator)
+    if classes is None:
+        return False
+    _, _, _nav, _switch, _report_cls, ZenoPublisherDialog = classes
+    app, err = qt_host.ensure_qt_runtime()
+    if app is None:
+        _report(operator, "WARNING", err or "Qt runtime unavailable.")
+        return False
+    try:
+        prefs = addon_prefs()
+        prefs_default = (prefs.default_project if prefs else "") or ""
+        hint = launch_context_mod.get_session_launch_hint()
+        dlg = ZenoPublisherDialog(
+            client=make_client(),
+            parent=None,
+            launch_hint=hint,
+            prefs_default_project=prefs_default,
+            on_publish=_queued_publish,
+            stay_on_top=True,
+        )
+        qt_host.retain_dialog(dlg)
+        dlg.show_non_modal()
+    except Exception as exc:
+        _report(operator, "WARNING", f"Publisher UI failed to open: {exc}")
+        return False
+    return True
+
+
+__all__ = [
+    "show_command_palette_qt",
+    "show_navigator_qt",
+    "show_navigator_action_qt",
+    "show_version_switcher_qt",
+    "show_report_issue_qt",
+    "show_publisher_qt",
+]

@@ -83,7 +83,7 @@ class ZENO_OT_navigator_open(bpy.types.Operator):
                 except Exception as exc:
                     self.report({"WARNING"}, f"Hub navigator failed: {exc}; falling back.")
         use_qt = getattr(prefs, "use_dashboard_qt_ui", True) if prefs else True
-        if use_qt and blender_qt.show_navigator_qt(operator=self):
+        if use_qt and blender_qt.show_navigator_action_qt(operator=self):
             return {"FINISHED"}
         return context.window_manager.invoke_props_dialog(self, width=520)
 

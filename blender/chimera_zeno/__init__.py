@@ -30,6 +30,7 @@ _ensure_zeno_client_on_path()
 
 from . import launch_context as launch_context_mod
 from . import (
+    action_ops,
     diagnostics_op,
     navigator,
     operators_load,
@@ -61,6 +62,7 @@ def register() -> None:
     operators_load.register()
     operators_publish.register()
     palette.register()
+    action_ops.register()
     navigator.register()
     ui_menus.register()
 
@@ -81,6 +83,7 @@ def unregister() -> None:
 
     ui_menus.unregister()
     navigator.unregister()
+    action_ops.unregister()
     palette.unregister()
     operators_publish.unregister()
     operators_load.unregister()

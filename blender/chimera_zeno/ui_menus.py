@@ -10,6 +10,9 @@ class ZENO_MT_main(bpy.types.Menu):
     def draw(self, context):  # pragma: no cover - Blender runtime
         col = self.layout.column(align=True)
         col.operator("zeno.navigator_open", text="Navigator")
+        col.operator("zeno.version_switcher_open", text="Version Switcher")
+        col.operator("zeno.report_issue_open", text="Report Issue")
+        col.operator("zeno.publisher_open", text="Publisher")
         col.separator()
         col.operator("chimera.palette_open", text="Command Palette")
 

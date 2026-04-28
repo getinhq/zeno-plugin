@@ -126,6 +126,33 @@ class ZenoClient:
             assert isinstance(data, list)
             return [d for d in data if isinstance(d, dict)]
 
+    def create_issue(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self._client() as c:
+            resp = c.post(_join(self.base_url, "/api/v1/issues"), json=body)
+            data = parse_json(resp, operation="create_issue")
+            assert isinstance(data, dict)
+            return data
+
+    def upload_issue_attachment(
+        self,
+        *,
+        issue_id: str,
+        file_path: str | Path,
+        filename: str | None = None,
+        mime_type: str | None = None,
+    ) -> dict[str, Any]:
+        p = Path(file_path)
+        name = filename or p.name
+        with p.open("rb") as fh, self._client() as c:
+            files = {"file": (name, fh, mime_type or "application/octet-stream")}
+            resp = c.post(
+                _join(self.base_url, f"/api/v1/issues/{issue_id}/attachments/upload"),
+                files=files,
+            )
+            data = parse_json(resp, operation="upload_issue_attachment")
+            assert isinstance(data, dict)
+            return data
+
     def latest_content_id(
         self,
         *,
