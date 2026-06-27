@@ -150,14 +150,16 @@ def resolve_palette_default_project(
     prefs_default: str,
     hint: dict[str, Any] | None,
 ) -> str:
-    """Default project code from addon prefs, then launch hint."""
+    """Default project code from launch hint first, then addon prefs."""
+    if hint and hint.get("project_code"):
+        project = str(hint["project_code"]).strip()
+        if project:
+            return project
     project = (prefs_default or "").strip()
     if project:
         return project
     if not hint:
         return ""
-    if hint.get("project_code"):
-        return str(hint["project_code"]).strip()
     if hint.get("project_id"):
         try:
             for p in client.list_projects():
