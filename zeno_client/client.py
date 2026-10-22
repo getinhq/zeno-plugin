@@ -172,6 +172,66 @@ class ZenoClient:
             assert isinstance(data, dict)
             return data
 
+    # --- Review ---
+    def submit_review(
+        self,
+        *,
+        task_id: str,
+        file_path: str | Path,
+        frame_start: int | None = None,
+        fps: str | None = None,
+        description: str | None = None,
+        version_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Upload a playblast/render/still as the task's next review revision.
+
+        ``fps`` is a rational string such as ``"24"`` or ``"24000/1001"``; ``frame_start``
+        is the scene frame of the first image so notes keep their place across revisions.
+        """
+        p = Path(file_path)
+        form: dict[str, str] = {"task_id": task_id}
+        if frame_start is not None:
+            form["frame_start"] = str(int(frame_start))
+        if fps:
+            form["fps"] = fps
+        if description:
+            form["description"] = description
+        if version_id:
+            form["version_id"] = version_id
+        timeout = httpx.Timeout(connect=10.0, read=600.0, write=600.0, pool=10.0)
+        with p.open("rb") as fh, httpx.Client(
+            timeout=timeout, headers=self._headers, transport=self._transport
+        ) as c:
+            resp = c.post(
+                _join(self.base_url, "/api/v1/reviews/items"),
+                data=form,
+                files={"file": (p.name, fh, "application/octet-stream")},
+            )
+            data = parse_json(resp, operation="submit_review")
+            assert isinstance(data, dict)
+            return data
+
+    def list_review_notes(self, task_id: str, *, status: str | None = "unresolved") -> list[dict[str, Any]]:
+        """Review notes for a task: ``unresolved`` (open or fixed), ``open``, ``fixed``, ``verified`` or all."""
+        params = {"task_id": task_id}
+        if status:
+            params["status"] = status
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/reviews/notes"), params=params)
+            data = parse_json(resp, operation="list_review_notes")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
+    def update_review_note(self, note_id: str, *, status: str, comment: str | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {"status": status}
+        if comment:
+            body["comment"] = comment
+        with self._client() as c:
+            resp = c.patch(_join(self.base_url, f"/api/v1/reviews/notes/{note_id}"), json=body)
+            data = parse_json(resp, operation="update_review_note")
+            assert isinstance(data, dict)
+            return data
+
     def latest_content_id(
         self,
         *,

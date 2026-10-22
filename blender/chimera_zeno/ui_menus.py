@@ -14,6 +14,9 @@ class ZENO_MT_main(bpy.types.Menu):
         col.operator("zeno.report_issue_open", text="Report Issue")
         col.operator("zeno.publisher_open", text="Publisher")
         col.separator()
+        col.operator("zeno.submit_review", text="Submit for Review…", icon="RENDER_ANIMATION")
+        col.operator("zeno.review_notes", text="Review Notes…", icon="TEXT")
+        col.separator()
         col.operator("chimera.palette_open", text="Command Palette")
 
 

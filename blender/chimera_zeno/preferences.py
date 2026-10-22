@@ -16,6 +16,11 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         default="",
         subtype="PASSWORD",
     )
+    dashboard_url: bpy.props.StringProperty(
+        name="Dashboard URL",
+        description="Where the Zeno dashboard runs; used to open reviews in the browser",
+        default="http://localhost:5173",
+    )
     default_project: bpy.props.StringProperty(name="Default Project", default="ndfc")
     default_asset: bpy.props.StringProperty(name="Default Asset", default="")
     user_id: bpy.props.StringProperty(name="User ID", default="blender_user")
@@ -78,6 +83,7 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         col.label(text="API / cache")
         col.prop(self, "api_base_url")
         col.prop(self, "api_token")
+        col.prop(self, "dashboard_url")
         col.prop(self, "default_project")
         col.prop(self, "default_asset")
         col.prop(self, "user_id")
