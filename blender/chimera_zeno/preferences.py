@@ -7,6 +7,15 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__.split(".")[0]
 
     api_base_url: bpy.props.StringProperty(name="API Base URL", default="http://127.0.0.1:8000")
+    api_token: bpy.props.StringProperty(
+        name="API Token",
+        description=(
+            "Personal access token from the Zeno dashboard (Account → API tokens). Not needed when "
+            "Blender is opened with 'Open in DCC' — that passes a token automatically."
+        ),
+        default="",
+        subtype="PASSWORD",
+    )
     default_project: bpy.props.StringProperty(name="Default Project", default="ndfc")
     default_asset: bpy.props.StringProperty(name="Default Asset", default="")
     user_id: bpy.props.StringProperty(name="User ID", default="blender_user")
@@ -68,6 +77,7 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         col = layout.column(align=True)
         col.label(text="API / cache")
         col.prop(self, "api_base_url")
+        col.prop(self, "api_token")
         col.prop(self, "default_project")
         col.prop(self, "default_asset")
         col.prop(self, "user_id")

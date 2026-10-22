@@ -15,7 +15,10 @@ def make_client():
 
     prefs = addon_prefs()
     base_url = getattr(prefs, "api_base_url", "").strip() if prefs else ""
-    return ZenoClient(base_url=base_url or None)
+    # A token pasted in preferences wins; otherwise ZenoClient falls back to
+    # ZENO_API_TOKEN or the token from "Open in DCC".
+    token = getattr(prefs, "api_token", "").strip() if prefs else ""
+    return ZenoClient(base_url=base_url or None, token=token or None)
 
 
 def make_cache():

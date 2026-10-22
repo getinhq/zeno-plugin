@@ -170,3 +170,26 @@ def test_lock_acquire_409_maps():
     except LockHeldByOther:
         assert True
 
+
+
+def test_token_from_argument_env_and_launch_context(monkeypatch):
+    import json as _json
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(200, json=[])
+
+    monkeypatch.delenv("ZENO_API_TOKEN", raising=False)
+    monkeypatch.delenv("ZENO_LAUNCH_CONTEXT", raising=False)
+    ZenoClient(base_url="http://api", transport=_transport(handler)).list_projects()
+    ZenoClient(base_url="http://api", transport=_transport(handler), token="zeno_pat_arg").list_projects()
+    monkeypatch.setenv(
+        "ZENO_LAUNCH_CONTEXT",
+        _json.dumps({"version": "1", "intent": "open_project", "project_id": "p", "dcc": "blender", "access_token": "zeno_pat_ctx"}),
+    )
+    ZenoClient(base_url="http://api", transport=_transport(handler)).list_projects()
+    monkeypatch.setenv("ZENO_API_TOKEN", "zeno_pat_env")
+    ZenoClient(base_url="http://api", transport=_transport(handler)).list_projects()
+    assert seen == [None, "Bearer zeno_pat_arg", "Bearer zeno_pat_ctx", "Bearer zeno_pat_env"]

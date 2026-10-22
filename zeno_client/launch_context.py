@@ -23,6 +23,7 @@ class LaunchContextV1:
     version_spec: Optional[dict[str, Any]] = None
     resolved_path: Optional[str] = None
     api_base_url: Optional[str] = None
+    access_token: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> LaunchContextV1:
@@ -41,6 +42,7 @@ class LaunchContextV1:
             version_spec=d.get("version_spec"),
             resolved_path=d.get("resolved_path"),
             api_base_url=d.get("api_base_url"),
+            access_token=d.get("access_token"),
         )
 
 

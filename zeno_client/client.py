@@ -12,6 +12,21 @@ from ._http import _join, parse_json, raise_for_status
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
 
+def _default_token() -> str | None:
+    """
+    API credential for DCC sessions, in priority order:
+    ZENO_API_TOKEN (personal access token), then the token the API put in
+    ZENO_LAUNCH_CONTEXT when the DCC was opened from the dashboard.
+    """
+    token = os.environ.get("ZENO_API_TOKEN", "").strip()
+    if token:
+        return token
+    from .launch_context import read_launch_context_from_environ
+
+    ctx = read_launch_context_from_environ()
+    return (ctx.access_token or None) if ctx else None
+
+
 def _default_base_url() -> str:
     return (
         os.environ.get("ZENO_API_BASE_URL")
@@ -28,10 +43,14 @@ class ZenoClient:
         timeout: httpx.Timeout | None = None,
         headers: dict[str, str] | None = None,
         transport: httpx.BaseTransport | None = None,
+        token: str | None = None,
     ):
         self.base_url = (base_url or _default_base_url()).rstrip("/")
         self._timeout = timeout or httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=10.0)
-        self._headers = headers or {}
+        self._headers = dict(headers or {})
+        token = token or _default_token()
+        if token and not any(k.lower() == "authorization" for k in self._headers):
+            self._headers["Authorization"] = f"Bearer {token}"
         self._transport = transport
 
     def _client(self) -> httpx.Client:
