@@ -241,6 +241,15 @@ class ZENO_OT_submit_review(bpy.types.Operator):
         if not task_id:
             self.report({"ERROR"}, "Pick the task this playblast is for.")
             return {"CANCELLED"}
+        if self.as_sequence:
+            # Ask before rendering: the studio may have image sequences switched off.
+            try:
+                decision = make_client().resolve_storage("frame.png")
+            except Exception:  # noqa: BLE001 - older server: no storage workflow, allow
+                decision = {}
+            if decision.get("strategy") == "off":
+                self.report({"ERROR"}, f"Image sequences are off ({decision.get('reason', '')}). Untick 'As image sequence'.")
+                return {"CANCELLED"}
         out_dir = Path(tempfile.mkdtemp(prefix="zeno_playblast_"))
         fps = fps_string(scene.render.fps, scene.render.fps_base)
         description = self.description.strip() or None

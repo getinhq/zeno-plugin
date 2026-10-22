@@ -172,6 +172,23 @@ class ZenoClient:
             assert isinstance(data, dict)
             return data
 
+    # --- Storage workflow ---
+    def storage_policy(self) -> dict[str, Any]:
+        """The studio's storage workflow: switches, per-extension strategies, algorithm catalog."""
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/storage-policy"))
+            data = parse_json(resp, operation="storage_policy")
+            assert isinstance(data, dict)
+            return data
+
+    def resolve_storage(self, filename: str) -> dict[str, Any]:
+        """How the studio wants ``filename`` stored: ``{"strategy": "chunked"|"whole"|"per_frame"|"off", "reason": ...}``."""
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/storage-policy/resolve"), params={"filename": filename})
+            data = parse_json(resp, operation="resolve_storage")
+            assert isinstance(data, dict)
+            return data
+
     # --- Review ---
     def submit_review(
         self,

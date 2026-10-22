@@ -203,10 +203,11 @@ class CHIMERA_OT_publish_current_file(bpy.types.Operator):
             )
             vn = out.registered_version.get("version_number")
             stage_label = stage or "legacy"
+            how = "whole file" if out.strategy == "whole" else "chunked"
             _report(
                 self,
                 "INFO",
-                f"Published v{vn} ({stage_label}, {out.uploaded_chunks} uploads)",
+                f"Published v{vn} ({stage_label}, {how}, {out.uploaded_chunks} uploads)",
             )
             _LAST_PUBLISH_RESULT.update(
                 {
@@ -216,8 +217,9 @@ class CHIMERA_OT_publish_current_file(bpy.types.Operator):
                     "manifest_id": out.manifest_id,
                     "pipeline_stage": stage,
                     "task_id": task_id,
-                    "message": f"Published v{vn} to {stage_label} stage "
-                    f"({out.uploaded_chunks} chunks uploaded).",
+                    "storage_strategy": out.strategy,
+                    "message": f"Published v{vn} to {stage_label} stage, stored {how} "
+                    f"({out.uploaded_chunks} upload(s)). {out.strategy_reason}".strip(),
                 }
             )
             return {"FINISHED"}
