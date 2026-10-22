@@ -232,3 +232,33 @@ def test_review_notes_list_and_update():
     assert calls[0][:3] == ("GET", "/api/v1/reviews/notes", {"task_id": "t1", "status": "unresolved"})
     assert calls[1][0] == "PATCH" and calls[1][1] == "/api/v1/reviews/notes/n1"
     assert b'"status": "fixed"' in calls[1][3] or b'"status":"fixed"' in calls[1][3]
+
+
+def test_submit_review_sequence_skips_frames_the_server_has(tmp_path):
+    from zeno_client._hash import compute_blake3
+
+    paths = {}
+    for f in range(1001, 1005):
+        p = tmp_path / f"sh010.{f}.png"
+        p.write_bytes(b"same" if f in (1003, 1004) else f"frame{f}".encode())
+        paths[f] = p
+    known = {compute_blake3(paths[1001])}  # already on the server
+    uploads, posted = [], {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/exists"):
+            h = req.url.path.split("/")[-2]
+            return httpx.Response(200, json={"exists": True}) if h in known else httpx.Response(404)
+        if req.url.path == "/api/v1/cas/blobs":
+            uploads.append(req.headers["x-content-hash"])
+            return httpx.Response(201)
+        posted.update(json.loads(req.content))
+        return httpx.Response(201, json={"id": "i1", "label": "v002"})
+
+    c = ZenoClient(base_url="http://api", transport=_transport(handler))
+    out = c.submit_review_sequence(task_id="t1", frames=paths, fps="24")
+    # 1001 known, 1002 new, 1003 new, 1004 duplicate of 1003 within the sequence.
+    assert len(uploads) == 2
+    assert out["upload"]["uploaded_frames"] == 2 and out["upload"]["skipped_frames"] == 2
+    assert [f["frame"] for f in posted["frames"]] == [1001, 1002, 1003, 1004]
+    assert posted["frames"][2]["content_id"] == posted["frames"][3]["content_id"]

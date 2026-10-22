@@ -211,6 +211,58 @@ class ZenoClient:
             assert isinstance(data, dict)
             return data
 
+    def submit_review_sequence(
+        self,
+        *,
+        task_id: str,
+        frames: dict[int, str | Path],
+        fps: str | None = None,
+        description: str | None = None,
+        version_id: str | None = None,
+        on_progress: Any = None,
+    ) -> dict[str, Any]:
+        """Submit an image sequence ({frame number: file}) for review, frame by frame.
+
+        Each frame is hashed locally; frames the server already stores (e.g. unchanged since
+        the previous revision) are not uploaded again. Returns the review item with an
+        ``upload`` summary of frames/bytes sent versus skipped.
+        """
+        from ._hash import compute_blake3
+
+        entries: list[dict[str, Any]] = []
+        sent: set[str] = set()
+        stats = {"frames": 0, "uploaded_frames": 0, "uploaded_bytes": 0, "skipped_frames": 0, "skipped_bytes": 0}
+        ordered = sorted(frames.items())
+        for i, (frame, path) in enumerate(ordered):
+            p = Path(path)
+            size = p.stat().st_size
+            h = compute_blake3(p)
+            if h in sent or self.blob_exists(h):
+                stats["skipped_frames"] += 1
+                stats["skipped_bytes"] += size
+            else:
+                self.upload_blob(p, h)
+                stats["uploaded_frames"] += 1
+                stats["uploaded_bytes"] += size
+            sent.add(h)
+            stats["frames"] += 1
+            entries.append({"frame": int(frame), "content_id": h, "size": size, "filename": p.name})
+            if on_progress:
+                on_progress(i + 1, len(ordered))
+        body: dict[str, Any] = {"task_id": task_id, "frames": entries}
+        if fps:
+            body["fps"] = fps
+        if description:
+            body["description"] = description
+        if version_id:
+            body["version_id"] = version_id
+        with self._client() as c:
+            resp = c.post(_join(self.base_url, "/api/v1/reviews/items/sequence"), json=body)
+            data = parse_json(resp, operation="submit_review_sequence")
+            assert isinstance(data, dict)
+        data["upload"] = stats
+        return data
+
     def list_review_notes(self, task_id: str, *, status: str | None = "unresolved") -> list[dict[str, Any]]:
         """Review notes for a task: ``unresolved`` (open or fixed), ``open``, ``fixed``, ``verified`` or all."""
         params = {"task_id": task_id}

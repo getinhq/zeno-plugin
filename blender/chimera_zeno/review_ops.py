@@ -137,6 +137,70 @@ def playblast(context, out_dir: Path) -> Path:  # pragma: no cover - Blender run
     return movies[-1]
 
 
+# Metadata Blender writes into image files. Date/time/render time differ on every render, which
+# would make unchanged frames hash differently and defeat per-frame dedup.
+_VOLATILE_STAMPS = (
+    "use_stamp_date", "use_stamp_time", "use_stamp_render_time", "use_stamp_memory",
+    "use_stamp_hostname", "use_stamp_frame_range", "use_stamp_note",
+)
+
+
+def playblast_sequence(context, out_dir: Path) -> dict[int, Path]:  # pragma: no cover - Blender runtime
+    """Render the scene range as PNG frames; returns {frame: path}. Settings are restored."""
+    scene = context.scene
+    render = scene.render
+    settings = render.image_settings
+    saved: dict[str, Any] = {
+        "filepath": render.filepath,
+        "use_file_extension": render.use_file_extension,
+        "resolution_percentage": render.resolution_percentage,
+        "engine": render.engine,
+        "media_type": getattr(settings, "media_type", None),
+        "file_format": settings.file_format,
+        "color_mode": settings.color_mode,
+        "compression": settings.compression,
+        "stamps": {k: getattr(render, k) for k in _VOLATILE_STAMPS if hasattr(render, k)},
+    }
+    try:
+        render.filepath = str(out_dir / "frame_")
+        render.use_file_extension = True
+        render.resolution_percentage = playblast_percentage(render.resolution_x, render.resolution_percentage)
+        if hasattr(settings, "media_type"):
+            settings.media_type = "IMAGE"
+        settings.file_format = "PNG"
+        settings.color_mode = "RGB"
+        settings.compression = 15
+        for key in saved["stamps"]:
+            setattr(render, key, False)
+        override = _view3d_override(context)
+        if override:
+            with context.temp_override(**override):
+                bpy.ops.render.opengl(animation=True, view_context=True)
+        else:
+            render.engine = "BLENDER_WORKBENCH"
+            bpy.ops.render.render(animation=True)
+    finally:
+        render.filepath = saved["filepath"]
+        render.use_file_extension = saved["use_file_extension"]
+        render.resolution_percentage = saved["resolution_percentage"]
+        render.engine = saved["engine"]
+        if saved["media_type"] is not None:
+            settings.media_type = saved["media_type"]
+        settings.file_format = saved["file_format"]
+        settings.color_mode = saved["color_mode"]
+        settings.compression = saved["compression"]
+        for key, value in saved["stamps"].items():
+            setattr(render, key, value)
+    frames = {}
+    for path in out_dir.glob("frame_*.png"):
+        digits = path.stem.split("_")[-1]
+        if digits.lstrip("-").isdigit():
+            frames[int(digits)] = path
+    if not frames:
+        raise RuntimeError("Blender did not write any frames")
+    return frames
+
+
 def _dashboard_url() -> str:
     prefs = addon_prefs()
     url = str(getattr(prefs, "dashboard_url", "") or "").strip().rstrip("/") if prefs else ""
@@ -149,6 +213,11 @@ class ZENO_OT_submit_review(bpy.types.Operator):
     bl_description = "Playblast the scene range and send it to the task's reviewer"
 
     description: bpy.props.StringProperty(name="What changed?", default="")
+    as_sequence: bpy.props.BoolProperty(
+        name="As image sequence",
+        description="Send PNG frames instead of a movie: frames that did not change since the last revision are not uploaded again",
+        default=False,
+    )
     open_after: bpy.props.BoolProperty(name="Open the review in the browser", default=False)
 
     def invoke(self, context, event):  # pragma: no cover - Blender runtime
@@ -163,6 +232,7 @@ class ZENO_OT_submit_review(bpy.types.Operator):
         col.prop(self, "description")
         r = scene.render
         col.label(text=f"Frames {scene.frame_start}–{scene.frame_end} at {fps_string(r.fps, r.fps_base)} fps", icon="RENDER_ANIMATION")
+        col.prop(self, "as_sequence")
         col.prop(self, "open_after")
 
     def execute(self, context):  # pragma: no cover - Blender runtime
@@ -172,30 +242,32 @@ class ZENO_OT_submit_review(bpy.types.Operator):
             self.report({"ERROR"}, "Pick the task this playblast is for.")
             return {"CANCELLED"}
         out_dir = Path(tempfile.mkdtemp(prefix="zeno_playblast_"))
+        fps = fps_string(scene.render.fps, scene.render.fps_base)
+        description = self.description.strip() or None
         try:
-            movie = playblast(context, out_dir)
+            if self.as_sequence:
+                frames = playblast_sequence(context, out_dir)
+                kwargs = {"task_id": task_id, "frames": frames, "fps": fps, "description": description}
+            else:
+                movie = playblast(context, out_dir)
+                kwargs = {"task_id": task_id, "file_path": movie, "frame_start": scene.frame_start,
+                          "fps": fps, "description": description}
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Playblast failed: {exc}")
             return {"CANCELLED"}
-        kwargs = {
-            "task_id": task_id,
-            "file_path": movie,
-            "frame_start": scene.frame_start,
-            "fps": fps_string(scene.render.fps, scene.render.fps_base),
-            "description": self.description.strip() or None,
-        }
-        _start_upload(kwargs, open_after=self.open_after)
+        _start_upload(kwargs, open_after=self.open_after, sequence=self.as_sequence)
         self.report({"INFO"}, "Zeno: uploading playblast…")
         return {"FINISHED"}
 
 
-def _start_upload(kwargs: dict, *, open_after: bool) -> None:  # pragma: no cover - Blender runtime
+def _start_upload(kwargs: dict, *, open_after: bool, sequence: bool = False) -> None:  # pragma: no cover - Blender runtime
     result: dict[str, Any] = {}
     client = make_client()
 
     def work() -> None:
         try:
-            result["item"] = client.submit_review(**kwargs)
+            submit = client.submit_review_sequence if sequence else client.submit_review
+            result["item"] = submit(**kwargs)
         except Exception as exc:  # noqa: BLE001
             result["error"] = str(exc)
 
@@ -216,8 +288,15 @@ def _start_upload(kwargs: dict, *, open_after: bool) -> None:  # pragma: no cove
         if open_after:
             webbrowser.open(url)
 
+        upload = item.get("upload") or {}
+
         def draw(self, _c):
             self.layout.label(text=f"{item.get('label', 'Revision')} is with the reviewer.")
+            if upload.get("frames"):
+                self.layout.label(
+                    text=f"Uploaded {upload['uploaded_frames']} of {upload['frames']} frames; "
+                    f"{upload['skipped_frames']} were already stored."
+                )
             self.layout.operator("wm.url_open", text="Open in browser", icon="URL").url = url
 
         wm.popup_menu(draw, title="Zeno: submitted for review", icon="CHECKMARK")
