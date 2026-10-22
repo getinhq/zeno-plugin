@@ -9,7 +9,7 @@ from .client import ZenoClient, default_client
 from .entropy_segment import EntropyConfig
 from .omni_ingest import OmniIngestResult, ingest_omni_file, materialize_from_manifest_v3
 from .palette_catalog import build_asset_uri, filter_assets
-from .publisher import PublishChunkedResult, publish_chunked_file
+from .publisher import PublishChunkedResult, publish_chunked_file, resolve_strategy
 from .launch_context import LaunchContextV1, read_launch_context_from_environ, apply_api_base_url_to_environ
 from .exceptions import (
     BadRequest,
@@ -147,6 +147,7 @@ __all__ = [
     "CacheConfig",
     "LocalCache",
     "publish_chunked_file",
+    "resolve_strategy",
     "PublishChunkedResult",
     "EntropyConfig",
     "OmniIngestResult",

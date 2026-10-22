@@ -114,6 +114,8 @@ def test_omni_without_canonical_still_registers_manifest_only(monkeypatch, tmp_p
     )
 
     assert captured["content_id"] == omni.manifest_id
-    assert captured.get("metadata") is None
+    # Only the storage workflow is recorded; no dual-artifact metadata.
+    assert set(captured["metadata"]) == {"storage"}
+    assert captured["metadata"]["storage"]["strategy"] == "chunked"
     assert res.delivery_content_id is None
     assert res.dedup_manifest_id is None

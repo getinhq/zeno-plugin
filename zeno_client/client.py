@@ -12,6 +12,21 @@ from ._http import _join, parse_json, raise_for_status
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
 
+def _default_token() -> str | None:
+    """
+    API credential for DCC sessions, in priority order:
+    ZENO_API_TOKEN (personal access token), then the token the API put in
+    ZENO_LAUNCH_CONTEXT when the DCC was opened from the dashboard.
+    """
+    token = os.environ.get("ZENO_API_TOKEN", "").strip()
+    if token:
+        return token
+    from .launch_context import read_launch_context_from_environ
+
+    ctx = read_launch_context_from_environ()
+    return (ctx.access_token or None) if ctx else None
+
+
 def _default_base_url() -> str:
     return (
         os.environ.get("ZENO_API_BASE_URL")
@@ -28,10 +43,14 @@ class ZenoClient:
         timeout: httpx.Timeout | None = None,
         headers: dict[str, str] | None = None,
         transport: httpx.BaseTransport | None = None,
+        token: str | None = None,
     ):
         self.base_url = (base_url or _default_base_url()).rstrip("/")
         self._timeout = timeout or httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=10.0)
-        self._headers = headers or {}
+        self._headers = dict(headers or {})
+        token = token or _default_token()
+        if token and not any(k.lower() == "authorization" for k in self._headers):
+            self._headers["Authorization"] = f"Bearer {token}"
         self._transport = transport
 
     def _client(self) -> httpx.Client:
@@ -150,6 +169,135 @@ class ZenoClient:
                 files=files,
             )
             data = parse_json(resp, operation="upload_issue_attachment")
+            assert isinstance(data, dict)
+            return data
+
+    # --- Storage workflow ---
+    def storage_policy(self) -> dict[str, Any]:
+        """The studio's storage workflow: switches, per-extension strategies, algorithm catalog."""
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/storage-policy"))
+            data = parse_json(resp, operation="storage_policy")
+            assert isinstance(data, dict)
+            return data
+
+    def resolve_storage(self, filename: str) -> dict[str, Any]:
+        """How the studio wants ``filename`` stored: ``{"strategy": "chunked"|"whole"|"per_frame"|"off", "reason": ...}``."""
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/storage-policy/resolve"), params={"filename": filename})
+            data = parse_json(resp, operation="resolve_storage")
+            assert isinstance(data, dict)
+            return data
+
+    # --- Review ---
+    def submit_review(
+        self,
+        *,
+        task_id: str,
+        file_path: str | Path,
+        frame_start: int | None = None,
+        fps: str | None = None,
+        description: str | None = None,
+        version_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Upload a playblast/render/still as the task's next review revision.
+
+        ``fps`` is a rational string such as ``"24"`` or ``"24000/1001"``; ``frame_start``
+        is the scene frame of the first image so notes keep their place across revisions.
+        """
+        p = Path(file_path)
+        form: dict[str, str] = {"task_id": task_id}
+        if frame_start is not None:
+            form["frame_start"] = str(int(frame_start))
+        if fps:
+            form["fps"] = fps
+        if description:
+            form["description"] = description
+        if version_id:
+            form["version_id"] = version_id
+        timeout = httpx.Timeout(connect=10.0, read=600.0, write=600.0, pool=10.0)
+        with p.open("rb") as fh, httpx.Client(
+            timeout=timeout, headers=self._headers, transport=self._transport
+        ) as c:
+            resp = c.post(
+                _join(self.base_url, "/api/v1/reviews/items"),
+                data=form,
+                files={"file": (p.name, fh, "application/octet-stream")},
+            )
+            data = parse_json(resp, operation="submit_review")
+            assert isinstance(data, dict)
+            return data
+
+    def submit_review_sequence(
+        self,
+        *,
+        task_id: str,
+        frames: dict[int, str | Path],
+        fps: str | None = None,
+        description: str | None = None,
+        version_id: str | None = None,
+        on_progress: Any = None,
+    ) -> dict[str, Any]:
+        """Submit an image sequence ({frame number: file}) for review, frame by frame.
+
+        Each frame is hashed locally; frames the server already stores (e.g. unchanged since
+        the previous revision) are not uploaded again. Returns the review item with an
+        ``upload`` summary of frames/bytes sent versus skipped.
+        """
+        from ._hash import compute_blake3
+
+        entries: list[dict[str, Any]] = []
+        sent: set[str] = set()
+        stats = {"frames": 0, "uploaded_frames": 0, "uploaded_bytes": 0, "skipped_frames": 0, "skipped_bytes": 0}
+        ordered = sorted(frames.items())
+        for i, (frame, path) in enumerate(ordered):
+            p = Path(path)
+            size = p.stat().st_size
+            h = compute_blake3(p)
+            if h in sent or self.blob_exists(h):
+                stats["skipped_frames"] += 1
+                stats["skipped_bytes"] += size
+            else:
+                self.upload_blob(p, h)
+                stats["uploaded_frames"] += 1
+                stats["uploaded_bytes"] += size
+            sent.add(h)
+            stats["frames"] += 1
+            entries.append({"frame": int(frame), "content_id": h, "size": size, "filename": p.name})
+            if on_progress:
+                on_progress(i + 1, len(ordered))
+        body: dict[str, Any] = {"task_id": task_id, "frames": entries}
+        if fps:
+            body["fps"] = fps
+        if description:
+            body["description"] = description
+        if version_id:
+            body["version_id"] = version_id
+        with self._client() as c:
+            resp = c.post(_join(self.base_url, "/api/v1/reviews/items/sequence"), json=body)
+            data = parse_json(resp, operation="submit_review_sequence")
+            assert isinstance(data, dict)
+        data["upload"] = stats
+        return data
+
+    def list_review_notes(self, task_id: str, *, status: str | None = "unresolved") -> list[dict[str, Any]]:
+        """Review notes for a task: ``unresolved`` (open or fixed), ``open``, ``fixed``, ``verified`` or all."""
+        params = {"task_id": task_id}
+        if status:
+            params["status"] = status
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/reviews/notes"), params=params)
+            data = parse_json(resp, operation="list_review_notes")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
+    def update_review_note(self, note_id: str, *, status: str, comment: str | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {"status": status}
+        if comment:
+            body["comment"] = comment
+        with self._client() as c:
+            resp = c.patch(_join(self.base_url, f"/api/v1/reviews/notes/{note_id}"), json=body)
+            data = parse_json(resp, operation="update_review_note")
             assert isinstance(data, dict)
             return data
 

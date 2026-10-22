@@ -170,3 +170,95 @@ def test_lock_acquire_409_maps():
     except LockHeldByOther:
         assert True
 
+
+
+def test_token_from_argument_env_and_launch_context(monkeypatch):
+    import json as _json
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(200, json=[])
+
+    monkeypatch.delenv("ZENO_API_TOKEN", raising=False)
+    monkeypatch.delenv("ZENO_LAUNCH_CONTEXT", raising=False)
+    ZenoClient(base_url="http://api", transport=_transport(handler)).list_projects()
+    ZenoClient(base_url="http://api", transport=_transport(handler), token="zeno_pat_arg").list_projects()
+    monkeypatch.setenv(
+        "ZENO_LAUNCH_CONTEXT",
+        _json.dumps({"version": "1", "intent": "open_project", "project_id": "p", "dcc": "blender", "access_token": "zeno_pat_ctx"}),
+    )
+    ZenoClient(base_url="http://api", transport=_transport(handler)).list_projects()
+    monkeypatch.setenv("ZENO_API_TOKEN", "zeno_pat_env")
+    ZenoClient(base_url="http://api", transport=_transport(handler)).list_projects()
+    assert seen == [None, "Bearer zeno_pat_arg", "Bearer zeno_pat_ctx", "Bearer zeno_pat_env"]
+
+
+def test_submit_review_sends_multipart(tmp_path):
+    clip = tmp_path / "pb.mp4"
+    clip.write_bytes(b"\x00\x00\x00 ftypisom")
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        seen["auth"] = req.headers.get("authorization")
+        seen["body"] = req.content
+        return httpx.Response(201, json={"id": "i1", "label": "v001", "processing_status": "queued"})
+
+    c = ZenoClient(base_url="http://api", transport=_transport(handler), token="zeno_pat_x")
+    out = c.submit_review(task_id="t1", file_path=clip, frame_start=1001, fps="24000/1001", description="pass")
+    assert out["label"] == "v001"
+    assert seen["path"] == "/api/v1/reviews/items"
+    assert seen["auth"] == "Bearer zeno_pat_x"
+    body = seen["body"]
+    for part in (b'name="task_id"', b"t1", b'name="frame_start"', b"1001", b"24000/1001", b'filename="pb.mp4"'):
+        assert part in body
+
+
+def test_review_notes_list_and_update():
+    calls = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append((req.method, req.url.path, dict(req.url.params), req.content))
+        if req.method == "GET":
+            return httpx.Response(200, json=[{"id": "n1", "frame": 1012, "status": "open", "body": "slide"}])
+        return httpx.Response(200, json={"id": "n1", "notes": []})
+
+    c = ZenoClient(base_url="http://api", transport=_transport(handler))
+    notes = c.list_review_notes("t1")
+    assert notes[0]["frame"] == 1012
+    c.update_review_note("n1", status="fixed", comment="planted")
+    assert calls[0][:3] == ("GET", "/api/v1/reviews/notes", {"task_id": "t1", "status": "unresolved"})
+    assert calls[1][0] == "PATCH" and calls[1][1] == "/api/v1/reviews/notes/n1"
+    assert b'"status": "fixed"' in calls[1][3] or b'"status":"fixed"' in calls[1][3]
+
+
+def test_submit_review_sequence_skips_frames_the_server_has(tmp_path):
+    from zeno_client._hash import compute_blake3
+
+    paths = {}
+    for f in range(1001, 1005):
+        p = tmp_path / f"sh010.{f}.png"
+        p.write_bytes(b"same" if f in (1003, 1004) else f"frame{f}".encode())
+        paths[f] = p
+    known = {compute_blake3(paths[1001])}  # already on the server
+    uploads, posted = [], {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/exists"):
+            h = req.url.path.split("/")[-2]
+            return httpx.Response(200, json={"exists": True}) if h in known else httpx.Response(404)
+        if req.url.path == "/api/v1/cas/blobs":
+            uploads.append(req.headers["x-content-hash"])
+            return httpx.Response(201)
+        posted.update(json.loads(req.content))
+        return httpx.Response(201, json={"id": "i1", "label": "v002"})
+
+    c = ZenoClient(base_url="http://api", transport=_transport(handler))
+    out = c.submit_review_sequence(task_id="t1", frames=paths, fps="24")
+    # 1001 known, 1002 new, 1003 new, 1004 duplicate of 1003 within the sequence.
+    assert len(uploads) == 2
+    assert out["upload"]["uploaded_frames"] == 2 and out["upload"]["skipped_frames"] == 2
+    assert [f["frame"] for f in posted["frames"]] == [1001, 1002, 1003, 1004]
+    assert posted["frames"][2]["content_id"] == posted["frames"][3]["content_id"]
