@@ -11,12 +11,15 @@ from zeno_client.review import (
     drawing_primitives,
     drawings_at_frame,
     fps_string,
+    frames_label,
     hex_color,
     marker_name,
     note_line,
     notes_at_frame,
+    notes_summary,
     playblast_percentage,
     shape_primitives,
+    sort_notes,
     to_pixels,
 )
 
@@ -152,3 +155,16 @@ def test_update_review_note_sends_fixed_in_revision():
     assert seen["body"] == {"status": "fixed", "comment": "Fixed in v004", "fixed_in_item_id": "item4"}
     c.update_review_note("n1", status="fixed")
     assert seen["body"] == {"status": "fixed"}
+
+
+def test_frames_label_sort_and_summary():
+    assert frames_label({"frame": 12}) == "12"
+    assert frames_label({"frame": 12, "frame_end": 12}) == "12"
+    assert frames_label({"frame": 10, "frame_end": 14}) == "10–14"
+    assert frames_label({"frame": None}) == "Whole clip"
+    notes = [{"id": "c", "frame": None}, {"id": "b", "frame": 40}, {"id": "a", "frame": 10, "created_at": "2"}, {"id": "a0", "frame": 10, "created_at": "1"}]
+    assert [n["id"] for n in sort_notes(notes)] == ["a0", "a", "b", "c"]
+    statuses = [{"status": "open"}, {"status": "open"}, {"status": "fixed"}]
+    assert notes_summary(statuses, 1) == "2 open · 1 waiting for the reviewer · 1 ticked"
+    assert notes_summary([{"status": "open"}]) == "1 open"
+    assert notes_summary([]) == "0 open"

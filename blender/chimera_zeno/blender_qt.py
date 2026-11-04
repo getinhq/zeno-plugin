@@ -454,7 +454,56 @@ def show_publisher_qt(operator: Any | None = None) -> bool:
     return True
 
 
+_review_notes: Any = None
+
+
+def _review_notes_alive() -> bool:
+    if _review_notes is None:
+        return False
+    try:
+        return bool(_review_notes.widget().isVisible())
+    except RuntimeError:  # the C++ dialog was deleted on close
+        return False
+
+
+def show_review_notes_qt(operator: Any | None = None) -> bool:
+    """Show the Review Notes window (one at a time). Returns False if Qt is unavailable."""
+    global _review_notes
+    if _review_notes_alive():
+        _review_notes.show_non_modal()
+        _review_notes.reload()
+        return True
+    if _load_dialog_classes(operator) is None:
+        return False
+    app, err = qt_host.ensure_qt_runtime()
+    if app is None:
+        _report(operator, "WARNING", err or "Qt runtime unavailable.")
+        return False
+    try:
+        from zeno_ui.review_notes_dialog import ZenoReviewNotesDialog
+
+        from .review_host import BlenderReviewHost
+
+        dlg = ZenoReviewNotesDialog(client=make_client(), host=BlenderReviewHost(), parent=None, stay_on_top=True)
+        qt_host.retain_dialog(dlg)
+        dlg.show_non_modal()
+        _review_notes = dlg
+    except Exception as exc:
+        traceback.print_exc()
+        _report(operator, "WARNING", f"Review Notes UI failed to open: {exc}")
+        return False
+    return True
+
+
+def reload_review_notes_qt() -> None:
+    """Refetch the open Review Notes window's notes (after a submission, for example)."""
+    if _review_notes_alive():
+        _review_notes.reload()
+
+
 __all__ = [
+    "show_review_notes_qt",
+    "reload_review_notes_qt",
     "show_command_palette_qt",
     "show_navigator_qt",
     "show_navigator_action_qt",

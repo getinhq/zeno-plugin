@@ -39,7 +39,6 @@ from . import (
     preferences,
     review_ops,
     review_overlay,
-    review_panel,
     review_state,
     ui_menus,
 )
@@ -70,7 +69,6 @@ def register() -> None:
     navigator.register()
     review_state.register()
     review_ops.register()
-    review_panel.register()
     review_overlay.register()
     ui_menus.register()
 
@@ -91,7 +89,6 @@ def unregister() -> None:
 
     ui_menus.unregister()
     review_overlay.unregister()
-    review_panel.unregister()
     review_ops.unregister()
     review_state.unregister()
     navigator.unregister()

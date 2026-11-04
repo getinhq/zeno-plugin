@@ -6,8 +6,9 @@
   frame and exact frame rate go with it, so reviewers' notes land on scene frame numbers.
   Notes the artist ticked as fixed are marked fixed *in that revision* once it is uploaded.
 - ``zeno.review_notes``: popup of the task's unresolved notes; click a frame to jump there,
-  tick a note as fixed, or drop all notes onto the timeline as markers. The docked version
-  of this list is the sidebar panel in ``review_panel``.
+  tick a note as fixed, or drop all notes onto the timeline as markers. Opens the Zeno
+  Review Notes window (``zeno_ui.review_notes_dialog``) when Qt is available; the popup is
+  the fallback.
 """
 from __future__ import annotations
 
@@ -182,10 +183,12 @@ class ZENO_OT_submit_review(bpy.types.Operator):
         default=False,
     )
     open_after: bpy.props.BoolProperty(name="Open the review in the browser", default=False)
+    keep_task: bpy.props.BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, event):  # pragma: no cover - Blender runtime
-        state.load_task_items()
-        state.default_task(context.scene)
+        if not (self.keep_task and state.current_task(context.scene)):
+            state.load_task_items()
+            state.default_task(context.scene)
         return context.window_manager.invoke_props_dialog(self, width=460)
 
     def draw(self, context):  # pragma: no cover - Blender runtime
@@ -278,6 +281,9 @@ def _start_upload(kwargs: dict, *, open_after: bool, sequence: bool = False, fix
             state.set_pending(scene, task_id, left)
         if scene is not None and state.current_task(scene) == task_id:
             state.refresh_async(task_id)
+        from . import blender_qt
+
+        blender_qt.reload_review_notes_qt()
         url = f"{_dashboard_url()}/review/{item['id']}"
         print(f"[Zeno] submitted {item.get('label')} for review: {url}")
         if open_after:
@@ -313,6 +319,12 @@ class ZENO_OT_review_notes(bpy.types.Operator):
     bl_description = "Unresolved review notes for your task; jump to their frames"
 
     def invoke(self, context, event):  # pragma: no cover - Blender runtime
+        prefs = addon_prefs()
+        if (getattr(prefs, "use_dashboard_qt_ui", True) if prefs else True):
+            from . import blender_qt
+
+            if blender_qt.show_review_notes_qt(operator=self):
+                return {"FINISHED"}
         state.load_task_items()
         state.default_task(context.scene)
         state.fetch_notes(state.current_task(context.scene))

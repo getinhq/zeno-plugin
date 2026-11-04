@@ -39,9 +39,14 @@ def load_stylesheet() -> str:
     return qss
 
 
-def apply_stylesheet(widget: Any) -> None:
-    """Apply Zeno theme QSS to a QWidget (or QApplication)."""
-    widget.setStyleSheet(load_stylesheet())
+def theme_tokens() -> dict[str, str]:
+    """Flattened theme.json tokens (``color.primary`` → ``#d4ff00``) for per-widget styles."""
+    return dict(_load_theme_json())
 
 
-__all__ = ["apply_stylesheet", "load_stylesheet"]
+def apply_stylesheet(widget: Any, extra_qss: str = "") -> None:
+    """Apply Zeno theme QSS (plus optional widget-specific rules) to a QWidget or QApplication."""
+    widget.setStyleSheet(load_stylesheet() + ("\n" + extra_qss if extra_qss else ""))
+
+
+__all__ = ["apply_stylesheet", "load_stylesheet", "theme_tokens"]

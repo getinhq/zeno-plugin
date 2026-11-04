@@ -25,10 +25,9 @@ def _topbar_zeno_menu(self, context):  # pragma: no cover - Blender runtime
 
 
 def register() -> None:
-    # Everything is reachable from the single top-bar "Zeno" menu, with no
-    # File-menu injections. The one sidebar tab is the review notes panel
-    # (review_panel), which artists keep open while fixing notes; it can be
-    # hidden in the add-on preferences.
+    # Everything is reachable from the single top-bar "Zeno" menu — no
+    # sidebar tabs and no File-menu injections, so the Blender UI stays
+    # clean and matches the top-down entry point the artist expects.
     bpy.utils.register_class(ZENO_MT_main)
     bpy.types.TOPBAR_MT_editor_menus.append(_topbar_zeno_menu)
 

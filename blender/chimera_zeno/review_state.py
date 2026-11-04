@@ -1,7 +1,6 @@
-"""Review state shared by the notes popup, the sidebar panel and the viewport overlay.
+"""Review state shared by the Review Notes window, the fallback popup and the viewport overlay.
 
-- Tasks and notes are fetched on a worker thread so the panel never blocks Blender; a timer
-  copies results in and redraws the UI.
+- ``notes`` holds the task whose notes were loaded last; the viewport overlay draws those.
 - *Pending fixes* are notes the artist ticked as fixed while working. They are saved in the
   .blend (``scene.zeno_pending_fixes``) and sent with the next Submit for Review, so the fix is
   recorded against the revision that contains it.
@@ -16,8 +15,6 @@ from typing import Any
 import bpy
 
 from .bridge import make_client
-
-AUTO_REFRESH_SECONDS = 120.0
 
 task_items: list[tuple[str, str, str]] = []
 # Blender keeps only pointers to the strings an enum callback returns, so the placeholder must
@@ -45,6 +42,15 @@ def _task_rows(tasks: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
         status = str(t.get("status") or "").replace("_", " ")
         items.append((str(t["id"]), f"{label}  ·  {status}", label))
     return items or [(NO_TASK, "No tasks assigned to you", "")]
+
+
+def set_task_items(tasks: list[dict[str, Any]]) -> None:
+    global task_items
+    task_items = _task_rows(tasks)
+
+
+def set_notes(task_id: str, loaded: list[dict[str, Any]]) -> None:
+    notes.update(task_id=task_id, notes=list(loaded), error="", loading=False, fetched_at=time.monotonic())
 
 
 def load_task_items() -> list[tuple[str, str, str]]:
@@ -136,18 +142,6 @@ def refresh_async(task_id: str, *, with_tasks: bool = False) -> None:  # pragma:
         return None
 
     bpy.app.timers.register(poll, first_interval=0.25)
-
-
-def ensure_fresh(task_id: str) -> None:  # pragma: no cover - Blender runtime
-    """Called from panel draws: refetch when the task changed or the notes are old."""
-    if notes["loading"]:
-        return
-    stale = time.monotonic() - notes["fetched_at"] > AUTO_REFRESH_SECONDS
-    never_loaded = not task_items and notes["fetched_at"] == 0.0
-    if notes["task_id"] != task_id or stale or never_loaded:
-        # Draw callbacks may not start work that touches the UI; defer to a timer.
-        bpy.app.timers.register(lambda: refresh_async(task_id, with_tasks=not task_items), first_interval=0.0)
-        notes["loading"] = True
 
 
 # --- pending fixes ---------------------------------------------------------------------

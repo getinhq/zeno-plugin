@@ -186,3 +186,28 @@ def bounding_rect(points: list[Point]) -> Rect:
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
     return (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+
+def frames_label(note: dict[str, Any]) -> str:
+    """``1012``, ``1012–1018`` or ``Whole clip`` for notes without a frame."""
+    start, end = note.get("frame"), note.get("frame_end")
+    if start is None:
+        return "Whole clip"
+    return f"{start}–{end}" if end not in (None, start) else str(start)
+
+
+def sort_notes(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Timeline order; notes without a frame last."""
+    return sorted(notes or [], key=lambda n: (n.get("frame") is None, n.get("frame") or 0, n.get("created_at") or ""))
+
+
+def notes_summary(notes: list[dict[str, Any]], ticked: int = 0) -> str:
+    """``2 open · 1 waiting for the reviewer · 1 ticked`` (zero counts left out)."""
+    open_n = sum(1 for n in notes or [] if n.get("status") == "open")
+    fixed_n = sum(1 for n in notes or [] if n.get("status") == "fixed")
+    parts = [f"{open_n} open"]
+    if fixed_n:
+        parts.append(f"{fixed_n} waiting for the reviewer")
+    if ticked:
+        parts.append(f"{ticked} ticked")
+    return " · ".join(parts)

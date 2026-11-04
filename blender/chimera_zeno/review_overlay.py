@@ -96,8 +96,7 @@ def draw() -> None:  # pragma: no cover - Blender runtime
     region, rv3d = context.region, context.region_data
     if scene is None or rv3d is None or not getattr(scene, "zeno_show_drawings", False):
         return
-    task_id = state.current_task(scene)
-    if not task_id or state.notes["task_id"] != task_id:
+    if not state.notes["task_id"]:
         return
     frame = scene.frame_current
     active = notes_at_frame(state.notes["notes"], frame)
