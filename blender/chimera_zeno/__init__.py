@@ -40,6 +40,7 @@ from . import (
     review_ops,
     review_overlay,
     review_state,
+    task_status,
     ui_menus,
 )
 from . import qt_host as _qt_host
@@ -71,6 +72,7 @@ def register() -> None:
     review_ops.register()
     review_overlay.register()
     ui_menus.register()
+    task_status.register()
 
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon if wm and wm.keyconfigs else None
@@ -87,6 +89,7 @@ def unregister() -> None:
 
     _qt_host.shutdown_qt_runtime()
 
+    task_status.unregister()
     ui_menus.unregister()
     review_overlay.unregister()
     review_ops.unregister()

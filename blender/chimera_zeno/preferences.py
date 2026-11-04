@@ -21,6 +21,11 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         description="Where the Zeno dashboard runs; used to open reviews in the browser",
         default="http://localhost:5173",
     )
+    show_status_line: bpy.props.BoolProperty(
+        name="Task status in the top bar",
+        description="Show your current task, its review state, open notes and due date next to the Zeno menu",
+        default=True,
+    )
     default_project: bpy.props.StringProperty(name="Default Project", default="ndfc")
     default_asset: bpy.props.StringProperty(name="Default Asset", default="")
     user_id: bpy.props.StringProperty(name="User ID", default="blender_user")
@@ -84,6 +89,7 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         col.prop(self, "api_base_url")
         col.prop(self, "api_token")
         col.prop(self, "dashboard_url")
+        col.prop(self, "show_status_line")
         col.prop(self, "default_project")
         col.prop(self, "default_asset")
         col.prop(self, "user_id")

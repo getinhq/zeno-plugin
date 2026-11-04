@@ -280,3 +280,92 @@ def submit_checks(
             "text": f"{last.get('label') or 'The last revision'} started at frame {last['frame_start']}; this one starts at {start}. Earlier notes are pinned to scene frames.",
         })
     return checks
+
+
+# --- task status line (DCC top bar) -----------------------------------------------------
+
+_DECISION_TEXT = {"approved": "approved", "approve": "approved", "changes_requested": "changes requested", "pending": "waiting for review"}
+
+
+def due_label(due: str | None, today: Any) -> tuple[str, str] | None:
+    """``("due Fri", "normal")``, ``("due tomorrow", "warning")``, ``("2 days late", "danger")``.
+
+    ``due`` is an ISO date or timestamp; ``today`` a ``datetime.date``.
+    """
+    if not due:
+        return None
+    from datetime import date, timedelta
+
+    try:
+        d = date.fromisoformat(str(due)[:10])
+    except ValueError:
+        return None
+    days = (d - today).days
+    if days < 0:
+        late = -days
+        return (f"{late} day{'s' if late != 1 else ''} late", "danger")
+    if days == 0:
+        return ("due today", "warning")
+    if days == 1:
+        return ("due tomorrow", "warning")
+    if days < 7:
+        return (f"due {d.strftime('%a')}", "normal")
+    return (f"due {d.day} {d.strftime('%b')}" + ("" if d.year == today.year else f" {d.year}"), "normal")
+
+
+def status_segments(
+    task: dict[str, Any] | None,
+    *,
+    last: dict[str, Any] | None = None,
+    open_notes: int = 0,
+    unread: int = 0,
+    today: Any = None,
+    title_width: int = 28,
+) -> list[tuple[str, str]]:
+    """Pieces of the top-bar line as ``(text, tone)``; tone is normal, ok, warning or danger."""
+    if not task:
+        return []
+    title = str(task.get("title") or task.get("type") or "Task")
+    if len(title) > title_width:
+        title = title[: title_width - 1] + "…"
+    out: list[tuple[str, str]] = [(title, "normal")]
+    if last:
+        state = str(last.get("review_status") or "")
+        tone = {"approved": "ok", "changes_requested": "warning"}.get(state, "normal")
+        out.append((f"{last.get('label') or 'Last revision'} {_DECISION_TEXT.get(state, state.replace('_', ' '))}".strip(), tone))
+    if open_notes:
+        out.append((f"{open_notes} open note{'s' if open_notes != 1 else ''}", "danger"))
+    if today is not None and str(task.get("status") or "").lower() not in ("done", "completed", "approved"):
+        due = due_label(task.get("due_date"), today)
+        if due:
+            out.append(due)
+    if unread:
+        out.append((f"{unread} new", "warning"))
+    return out
+
+
+def notification_text(n: dict[str, Any], width: int = 70) -> str:
+    """One line for a Zeno notification, e.g. ``v003: changes requested (2 open notes)``."""
+    p = n.get("payload") or {}
+    kind = str(n.get("kind") or "")
+    rev = p.get("revision") or ""
+    if kind == "review.decided":
+        text = f"{rev or 'Revision'}: {_DECISION_TEXT.get(str(p.get('decision')), p.get('decision'))}"
+        if p.get("open_notes"):
+            text += f" ({p['open_notes']} open note{'s' if p['open_notes'] != 1 else ''})"
+    elif kind == "review.client_decision":
+        text = f"Client {_DECISION_TEXT.get(str(p.get('decision')), p.get('decision') or 'replied')}" + (f" on {rev}" if rev else "")
+    elif kind in ("review.note", "review.client_note"):
+        who = "Client note" if kind == "review.client_note" else "New note"
+        where = f" on frame {p['frame']}" if p.get("frame") is not None else ""
+        text = f"{who}{where}: {' '.join(str(p.get('excerpt') or '').split())}"
+    elif kind == "review.note_fixed":
+        text = f"Marked fixed: {' '.join(str(p.get('excerpt') or '').split())}"
+    elif kind == "review.submitted":
+        text = f"{rev or 'A revision'} submitted for review"
+    else:
+        text = str(p.get("title") or p.get("excerpt") or kind.replace(".", " ").replace("_", " "))
+    task = p.get("task_title")
+    if task:
+        text = f"{task}: {text}"
+    return text if len(text) <= width else text[: width - 1] + "…"

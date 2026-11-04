@@ -60,6 +60,10 @@ class BlenderReviewHost:
 
     def on_notes(self, task_id: str, notes: list[dict[str, Any]]) -> None:
         state.set_notes(task_id, notes)
+        from . import task_status
+
+        if task_id and str((task_status.status["task"] or {}).get("id") or "") != task_id:
+            bpy.app.timers.register(lambda: (task_status.refresh(), None)[1], first_interval=0.1)
         scene = bpy.context.scene
         if task_id and task_id in [i[0] for i in state.task_items]:
             scene.zeno_review_task = task_id

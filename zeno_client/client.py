@@ -280,6 +280,22 @@ class ZenoClient:
         data["upload"] = stats
         return data
 
+    def list_notifications(self, project_id: str, *, unread_only: bool = False, limit: int = 20) -> dict[str, Any]:
+        """``{"items": [...], "unread_count": n}`` for the caller in one project."""
+        params = {"project_id": project_id, "limit": str(limit)}
+        if unread_only:
+            params["unread_only"] = "true"
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/notifications"), params=params)
+            data = parse_json(resp, operation="list_notifications")
+            assert isinstance(data, dict)
+            return data
+
+    def mark_notifications_read(self, ids: list[str]) -> None:
+        with self._client() as c:
+            resp = c.post(_join(self.base_url, "/api/v1/notifications/mark-read"), json={"ids": list(ids)})
+            parse_json(resp, operation="mark_notifications_read")
+
     def get_shot(self, shot_id: str) -> dict[str, Any]:
         with self._client() as c:
             resp = c.get(_join(self.base_url, f"/api/v1/shots/{shot_id}"))

@@ -306,9 +306,10 @@ def start_upload(kwargs: dict, *, sequence: bool, fixes: list[str] | tuple[str, 
                 state.set_pending(scene, task_id, left)
             if scene is not None and state.current_task(scene) == task_id:
                 state.refresh_async(task_id)
-            from . import blender_qt
+            from . import blender_qt, task_status
 
             blender_qt.reload_review_notes_qt()
+            task_status.refresh()
         if on_done is not None:
             on_done(result)
         return None

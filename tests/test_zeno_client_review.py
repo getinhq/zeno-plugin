@@ -220,3 +220,64 @@ def test_client_shot_and_latest_item():
     c = ZenoClient(base_url="http://api", transport=httpx.MockTransport(handler))
     assert c.get_shot("s1")["frame_start"] == 1001
     assert c.latest_review_item("t1")["label"] == "v003"
+
+
+from datetime import date  # noqa: E402
+
+from zeno_client.review import due_label, notification_text, status_segments  # noqa: E402
+
+TODAY = date(2026, 11, 4)  # a Wednesday
+
+
+def test_due_label():
+    assert due_label(None, TODAY) is None
+    assert due_label("2026-11-02T18:00:00+00:00", TODAY) == ("2 days late", "danger")
+    assert due_label("2026-11-03", TODAY) == ("1 day late", "danger")
+    assert due_label("2026-11-04", TODAY) == ("due today", "warning")
+    assert due_label("2026-11-05", TODAY) == ("due tomorrow", "warning")
+    assert due_label("2026-11-06", TODAY) == ("due Fri", "normal")
+    assert due_label("2026-11-20", TODAY) == ("due 20 Nov", "normal")
+    assert due_label("2027-01-08", TODAY) == ("due 8 Jan 2027", "normal")
+    assert due_label("garbage", TODAY) is None
+
+
+def test_status_segments():
+    task = {"title": "sh0010 lighting", "status": "in_progress", "due_date": "2026-11-05"}
+    last = {"label": "v003", "review_status": "changes_requested"}
+    assert status_segments(task, last=last, open_notes=2, unread=3, today=TODAY) == [
+        ("sh0010 lighting", "normal"),
+        ("v003 changes requested", "warning"),
+        ("2 open notes", "danger"),
+        ("due tomorrow", "warning"),
+        ("3 new", "warning"),
+    ]
+    done = {"title": "x" * 40, "status": "completed", "due_date": "2026-11-01"}
+    segs = status_segments(done, last={"label": "v005", "review_status": "approved"}, today=TODAY)
+    assert segs == [("x" * 27 + "…", "normal"), ("v005 approved", "ok")]  # no "late" once done
+    assert status_segments(None) == []
+
+
+def test_notification_text():
+    decided = {"kind": "review.decided", "payload": {"task_title": "sh0010 lighting", "revision": "v003", "decision": "changes_requested", "open_notes": 2}}
+    assert notification_text(decided) == "sh0010 lighting: v003: changes requested (2 open notes)"
+    note = {"kind": "review.note", "payload": {"frame": 1012, "excerpt": "Foot  slides"}}
+    assert notification_text(note) == "New note on frame 1012: Foot slides"
+    client = {"kind": "review.client_decision", "payload": {"decision": "approve", "revision": "v004"}}
+    assert notification_text(client) == "Client approved on v004"
+    assert notification_text({"kind": "issue.created", "payload": {"title": "Rig breaks"}}) == "Rig breaks"
+    assert notification_text({"kind": "review.note", "payload": {"excerpt": "y" * 200}}, width=30).endswith("…")
+
+
+def test_client_notifications():
+    seen = {}
+
+    def handler(req):
+        seen.setdefault("calls", []).append((req.method, req.url.path, dict(req.url.params), req.content))
+        return httpx.Response(200, json={"items": [], "unread_count": 4} if req.method == "GET" else {"ok": True})
+
+    c = ZenoClient(base_url="http://api", transport=httpx.MockTransport(handler))
+    assert c.list_notifications("p1", unread_only=True, limit=5)["unread_count"] == 4
+    c.mark_notifications_read(["a", "b"])
+    (m1, path1, q1, _), (m2, path2, _, body2) = seen["calls"]
+    assert (m1, path1, q1) == ("GET", "/api/v1/notifications", {"project_id": "p1", "limit": "5", "unread_only": "true"})
+    assert (m2, path2, json.loads(body2)) == ("POST", "/api/v1/notifications/mark-read", {"ids": ["a", "b"]})
