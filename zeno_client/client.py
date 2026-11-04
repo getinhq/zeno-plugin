@@ -280,6 +280,21 @@ class ZenoClient:
         data["upload"] = stats
         return data
 
+    def get_shot(self, shot_id: str) -> dict[str, Any]:
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, f"/api/v1/shots/{shot_id}"))
+            data = parse_json(resp, operation="get_shot")
+            assert isinstance(data, dict)
+            return data
+
+    def latest_review_item(self, task_id: str) -> dict[str, Any] | None:
+        """The task's newest review revision, or None before the first submission."""
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/reviews/items"), params={"task_id": task_id, "latest_only": "true"})
+            data = parse_json(resp, operation="latest_review_item")
+            assert isinstance(data, list)
+            return next((d for d in data if isinstance(d, dict)), None)
+
     def list_review_notes(self, task_id: str, *, status: str | None = "unresolved") -> list[dict[str, Any]]:
         """Review notes for a task: ``unresolved`` (open or fixed), ``open``, ``fixed``, ``verified`` or all."""
         params = {"task_id": task_id}

@@ -211,3 +211,72 @@ def notes_summary(notes: list[dict[str, Any]], ticked: int = 0) -> str:
     if ticked:
         parts.append(f"{ticked} ticked")
     return " · ".join(parts)
+
+
+# --- checks before a review submission -------------------------------------------------
+
+
+def shot_range(shot: dict[str, Any] | None) -> tuple[int, int, int, int] | None:
+    """``(cut_in, cut_out, handle_in, handle_out)`` when the shot has a cut range."""
+    if not shot or shot.get("frame_start") is None or shot.get("frame_end") is None:
+        return None
+    return (int(shot["frame_start"]), int(shot["frame_end"]), int(shot.get("handle_in") or 0), int(shot.get("handle_out") or 0))
+
+
+def submit_checks(
+    scene: dict[str, Any],
+    *,
+    shot: dict[str, Any] | None = None,
+    last: dict[str, Any] | None = None,
+    sequences_off: str | None = None,
+    as_sequence: bool = False,
+) -> list[dict[str, Any]]:
+    """What to tell the artist before rendering.
+
+    ``scene``: ``frame_start``, ``frame_end``, ``fps`` (rational string), ``has_camera``.
+    Each check is ``{"level": "error" | "warning" | "ok", "text", "fix"?}``; ``fix`` names
+    an action the window can offer (``{"action": "use_shot_range", "start", "end", "label"}``).
+    Any ``error`` blocks the submission.
+    """
+    checks: list[dict[str, Any]] = []
+    start, end = int(scene["frame_start"]), int(scene["frame_end"])
+    if not scene.get("has_camera", True):
+        checks.append({"level": "error", "text": "The scene has no camera. The playblast is the camera view."})
+    if as_sequence and sequences_off:
+        checks.append({"level": "error", "text": f"Image sequences are switched off for this studio ({sequences_off}). Send a movie instead."})
+
+    rng = shot_range(shot)
+    code = str((shot or {}).get("shot_code") or "the shot")
+    if rng:
+        cut_in, cut_out, h_in, h_out = rng
+        handles = f", handles {h_in}/{h_out}" if (h_in or h_out) else ""
+        with_handles = (cut_in - h_in, cut_out + h_out)
+        if (start, end) == (cut_in, cut_out):
+            checks.append({"level": "ok", "text": f"Frames {start}–{end} match {code}'s cut{handles}."})
+        elif (start, end) == with_handles and (h_in or h_out):
+            checks.append({"level": "ok", "text": f"Frames {start}–{end} are {code}'s cut {cut_in}–{cut_out} with handles {h_in}/{h_out}."})
+        else:
+            fix = {"action": "use_shot_range", "start": cut_in, "end": cut_out, "label": f"Use {cut_in}–{cut_out}"}
+            if start > cut_in or end < cut_out:
+                text = f"Frames {start}–{end} miss part of {code}'s cut {cut_in}–{cut_out}{handles}."
+                checks.append({"level": "warning", "text": text, "fix": fix})
+            else:
+                text = f"Frames {start}–{end} are wider than {code}'s cut {cut_in}–{cut_out}{handles}."
+                checks.append({"level": "warning", "text": text, "fix": fix})
+    elif shot is None:
+        checks.append({"level": "ok", "text": f"Frames {start}–{end} ({end - start + 1} frames)."})
+    else:
+        checks.append({"level": "warning", "text": f"{code} has no frame range in Zeno yet, so the range can't be checked."})
+
+    last_fps = (last or {}).get("fps")  # the API sends a float (23.976…); the scene a rational string
+    if last_fps and scene.get("fps") and abs(float(last_fps) - float(Fraction(str(scene["fps"])))) > 1e-3:
+        checks.append({
+            "level": "warning",
+            "text": f"{last.get('label') or 'The last revision'} was {fps_string(float(last_fps))} fps; this scene is {scene['fps']} fps. Notes land on the wrong frames if the rate changed by mistake.",
+        })
+    if last and last.get("frame_start") is not None and int(last["frame_start"]) != start:
+        checks.append({
+            "level": "warning",
+            "text": f"{last.get('label') or 'The last revision'} started at frame {last['frame_start']}; this one starts at {start}. Earlier notes are pinned to scene frames.",
+        })
+    return checks

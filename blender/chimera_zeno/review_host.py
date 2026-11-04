@@ -1,14 +1,17 @@
 """Blender side of the Zeno Review Notes window (``zeno_ui.review_notes_dialog``).
 
 The window runs on Blender's main thread (Qt events are pumped from a ``bpy.app.timers``
-tick), so these methods may touch ``bpy`` data directly. Operators that open dialogs go
-through ``qt_host.queue_main_thread`` with a window override, because a timer has none.
+tick), so these methods may touch ``bpy`` data directly. Operators and renders go through
+``qt_host.queue_main_thread``, which runs them outside Qt's event processing (with a window
+override where an operator needs one).
 """
 from __future__ import annotations
 
 from typing import Any
 
 import bpy
+
+from zeno_client.review import fps_string, playblast_percentage
 
 from . import qt_host
 from . import review_state as state
@@ -81,4 +84,60 @@ class BlenderReviewHost:
     def submit_review(self, task_id: str) -> None:
         if task_id and task_id in [i[0] for i in state.task_items]:
             bpy.context.scene.zeno_review_task = task_id
-        _run_with_window(lambda: bpy.ops.zeno.submit_review("INVOKE_DEFAULT", keep_task=True))
+        from . import blender_qt
+
+        if not blender_qt.show_submit_review_qt(task_id=task_id):
+            _run_with_window(lambda: bpy.ops.zeno.submit_review("INVOKE_DEFAULT", keep_task=True, native=True))
+
+    # --- Submit for Review window ------------------------------------------------------
+
+    def scene_info(self) -> dict[str, Any]:
+        scene = bpy.context.scene
+        r = scene.render
+        pct = playblast_percentage(r.resolution_x, r.resolution_percentage)
+        cam = scene.camera
+        return {
+            "frame_start": int(scene.frame_start),
+            "frame_end": int(scene.frame_end),
+            "fps": fps_string(r.fps, r.fps_base),
+            "has_camera": cam is not None and cam.type == "CAMERA",
+            "resolution": f"{r.resolution_x * pct // 100}×{r.resolution_y * pct // 100}",
+            "file_name": bpy.path.basename(bpy.data.filepath) or "unsaved file",
+        }
+
+    def set_frame_range(self, start: int, end: int) -> None:
+        scene = bpy.context.scene
+        scene.frame_start, scene.frame_end = int(start), int(end)
+        if not (scene.frame_start <= scene.frame_current <= scene.frame_end):
+            scene.frame_set(scene.frame_start)
+
+    def render_and_submit(
+        self, task_id: str, *, description: str, as_sequence: bool, fixes: list[str], on_done, on_stage=None
+    ) -> None:
+        """Render (blocks Blender, as any playblast does), then upload in the background.
+
+        The render is queued to run outside Qt's event processing: rendering inside a Qt slot
+        nests Blender's Cocoa autorelease pools inside Qt's and crashes Blender on macOS.
+        """
+        from . import review_ops
+
+        def done(result: dict[str, Any]) -> None:
+            try:
+                on_done(result)
+            except RuntimeError:  # the window was closed while uploading
+                print(f"[Zeno] review upload finished: {result.get('url') or result.get('error')}")
+
+        def render() -> None:
+            try:
+                kwargs = review_ops.render_playblast(bpy.context, task_id, as_sequence=as_sequence, description=description)
+            except Exception as exc:  # noqa: BLE001
+                done({"error": f"Playblast failed: {exc}"})
+                return
+            if on_stage is not None:
+                try:
+                    on_stage("uploading")
+                except RuntimeError:
+                    pass
+            review_ops.start_upload(kwargs, sequence=as_sequence, fixes=fixes, on_done=done)
+
+        qt_host.queue_main_thread(render)

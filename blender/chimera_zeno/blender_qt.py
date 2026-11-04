@@ -495,6 +495,43 @@ def show_review_notes_qt(operator: Any | None = None) -> bool:
     return True
 
 
+_submit_review: Any = None
+
+
+def show_submit_review_qt(operator: Any | None = None, task_id: str = "") -> bool:
+    """Show the Submit for Review window (one at a time). Returns False if Qt is unavailable."""
+    global _submit_review
+    if _submit_review is not None:
+        try:
+            if _submit_review.widget().isVisible():
+                _submit_review.show_non_modal()
+                return True
+        except RuntimeError:
+            pass
+    if _load_dialog_classes(operator) is None:
+        return False
+    app, err = qt_host.ensure_qt_runtime()
+    if app is None:
+        _report(operator, "WARNING", err or "Qt runtime unavailable.")
+        return False
+    try:
+        from zeno_ui.submit_review_dialog import ZenoSubmitReviewDialog
+
+        from .review_host import BlenderReviewHost
+
+        dlg = ZenoSubmitReviewDialog(
+            client=make_client(), host=BlenderReviewHost(), task_id=task_id, parent=None, stay_on_top=True
+        )
+        qt_host.retain_dialog(dlg)
+        dlg.show_non_modal()
+        _submit_review = dlg
+    except Exception as exc:
+        traceback.print_exc()
+        _report(operator, "WARNING", f"Submit for Review UI failed to open: {exc}")
+        return False
+    return True
+
+
 def reload_review_notes_qt() -> None:
     """Refetch the open Review Notes window's notes (after a submission, for example)."""
     if _review_notes_alive():
@@ -504,6 +541,7 @@ def reload_review_notes_qt() -> None:
 __all__ = [
     "show_review_notes_qt",
     "reload_review_notes_qt",
+    "show_submit_review_qt",
     "show_command_palette_qt",
     "show_navigator_qt",
     "show_navigator_action_qt",

@@ -168,3 +168,55 @@ def test_frames_label_sort_and_summary():
     assert notes_summary(statuses, 1) == "2 open · 1 waiting for the reviewer · 1 ticked"
     assert notes_summary([{"status": "open"}]) == "1 open"
     assert notes_summary([]) == "0 open"
+
+
+from zeno_client.review import submit_checks  # noqa: E402
+
+SHOT = {"shot_code": "sh0010", "frame_start": 1001, "frame_end": 1096, "handle_in": 8, "handle_out": 8}
+
+
+def _levels(checks):
+    return [c["level"] for c in checks]
+
+
+def test_submit_checks_frame_range():
+    ok = submit_checks({"frame_start": 1001, "frame_end": 1096, "fps": "24"}, shot=SHOT)
+    assert _levels(ok) == ["ok"] and "match sh0010" in ok[0]["text"]
+    handles = submit_checks({"frame_start": 993, "frame_end": 1104, "fps": "24"}, shot=SHOT)
+    assert _levels(handles) == ["ok"] and "handles 8/8" in handles[0]["text"]
+    short = submit_checks({"frame_start": 1, "frame_end": 250, "fps": "24"}, shot=SHOT)
+    assert _levels(short) == ["warning"] and "miss part" in short[0]["text"]
+    assert short[0]["fix"] == {"action": "use_shot_range", "start": 1001, "end": 1096, "label": "Use 1001–1096"}
+    wide = submit_checks({"frame_start": 990, "frame_end": 1100, "fps": "24"}, shot=SHOT)
+    assert "wider" in wide[0]["text"] and wide[0]["fix"]["start"] == 1001
+    no_range = submit_checks({"frame_start": 1, "frame_end": 10, "fps": "24"}, shot={"shot_code": "sh0020"})
+    assert _levels(no_range) == ["warning"] and "no frame range" in no_range[0]["text"]
+    asset_task = submit_checks({"frame_start": 1, "frame_end": 10, "fps": "24"})
+    assert _levels(asset_task) == ["ok"] and "10 frames" in asset_task[0]["text"]
+
+
+def test_submit_checks_blockers_and_continuity():
+    scene = {"frame_start": 1001, "frame_end": 1096, "fps": "24000/1001", "has_camera": False}
+    checks = submit_checks(scene, shot=SHOT, sequences_off="studio switched PNG off", as_sequence=True,
+                           last={"label": "v003", "fps": 25.0, "frame_start": 1})
+    assert _levels(checks)[:2] == ["error", "error"]
+    texts = " ".join(c["text"] for c in checks)
+    assert "no camera" in texts and "switched off" in texts
+    assert "v003 was 25 fps; this scene is 24000/1001 fps" in texts
+    assert "started at frame 1; this one starts at 1001" in texts
+    # Same rate as a float from the API is not a mismatch; movies ignore the sequence switch.
+    same = submit_checks({"frame_start": 1001, "frame_end": 1096, "fps": "24000/1001"}, shot=SHOT,
+                         last={"fps": 24000 / 1001, "frame_start": 1001}, sequences_off="off", as_sequence=False)
+    assert _levels(same) == ["ok"]
+
+
+def test_client_shot_and_latest_item():
+    def handler(req):
+        if req.url.path == "/api/v1/shots/s1":
+            return httpx.Response(200, json={"id": "s1", "frame_start": 1001})
+        assert req.url.params["task_id"] == "t1" and req.url.params["latest_only"] == "true"
+        return httpx.Response(200, json=[] if req.url.params.get("task_id") == "none" else [{"id": "i3", "label": "v003"}])
+
+    c = ZenoClient(base_url="http://api", transport=httpx.MockTransport(handler))
+    assert c.get_shot("s1")["frame_start"] == 1001
+    assert c.latest_review_item("t1")["label"] == "v003"
