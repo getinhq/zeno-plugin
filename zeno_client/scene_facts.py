@@ -56,3 +56,28 @@ def facts_checks(report: dict[str, Any] | None) -> list[dict[str, Any]]:
     if current and not any(o["level"] == "warning" for o in out):
         out.append({"level": "ok", "text": f"{len(current)} linked asset(s) are on their approved versions."})
     return out
+
+
+def missing_libraries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Linked libraries to fetch on this machine.
+
+    ``entries``: ``{"stored": path as saved in the file, "abspath", "exists", "tag"}`` per
+    library. A library qualifies when its file is missing here and it can be identified as a
+    Zeno version (tag or cache path). Libraries sharing one content id are fetched once.
+    """
+    out: list[dict[str, Any]] = []
+    for e in entries:
+        if e.get("exists"):
+            continue
+        cid = library_identity(e.get("tag"), str(e.get("abspath") or e.get("stored") or ""))
+        if not cid:
+            continue
+        tag = e.get("tag") or {}
+        out.append({
+            "stored": e["stored"],
+            "content_id": cid,
+            "filename": PurePath(str(e.get("abspath") or e["stored"]).replace("\\", "/")).name or "linked.blend",
+            "asset": tag.get("asset") or "",
+            "version": tag.get("version"),
+        })
+    return out

@@ -64,3 +64,21 @@ def test_client_scene_facts_calls():
     assert c.lookup_versions([CID])[0]["version"] == 3
     assert calls == [("PUT", "/api/v1/shots/s1/scene-facts", {"frame_start": 1}),
                      ("POST", "/api/v1/versions/lookup", {"content_ids": [CID]})]
+
+
+from zeno_client.scene_facts import missing_libraries  # noqa: E402
+
+
+def test_missing_libraries():
+    other = "cd" * 32
+    entries = [
+        {"stored": f"/Users/sam/.chimera/cache/{CID}/nono.blend", "abspath": f"/Users/sam/.chimera/cache/{CID}/nono.blend",
+         "exists": False, "tag": {"content_id": CID, "asset": "nono", "version": 2}},
+        {"stored": f"/Users/sam/.chimera/cache/{other}/mug.blend", "abspath": f"/Users/sam/.chimera/cache/{other}/mug.blend",
+         "exists": False, "tag": None},  # untagged, but the cache path names it
+        {"stored": "/Users/me/.chimera/cache/x/tree.blend", "abspath": "/Users/me/.chimera/cache/x/tree.blend", "exists": True, "tag": {}},
+        {"stored": "/nas/old/rock.blend", "abspath": "/nas/old/rock.blend", "exists": False, "tag": None},  # not Zeno: leave it
+    ]
+    got = missing_libraries(entries)
+    assert [(g["content_id"], g["filename"], g["asset"], g["version"]) for g in got] == [
+        (CID, "nono.blend", "nono", 2), (other, "mug.blend", "", None)]

@@ -6,17 +6,24 @@
 - ``chimera.update_linked_asset``: point a linked library at another version and reload it.
 - ``collect_facts``: frame range, frame rate, camera and the linked Zeno versions, sent to
   ``PUT /shots/{id}/scene-facts`` by the Submit for Review window.
+- ``relink_missing``: linked files point into the local cache of whoever linked them. When
+  a file opens on another machine, Zeno libraries whose file is missing are fetched into this
+  machine's cache by content id (in the background), repointed and reloaded. Runs on file
+  load and from Zeno > Fix Linked Assets.
 """
 from __future__ import annotations
 
+import os
+import threading
 from typing import Any
 
 import bpy
+from bpy.app.handlers import persistent
 
 from zeno_client.review import fps_string
-from zeno_client.scene_facts import library_identity
+from zeno_client.scene_facts import library_identity, missing_libraries
 
-from .bridge import build_asset_uri, make_cache, make_client
+from .bridge import addon_prefs, build_asset_uri, make_cache, make_client
 
 TAG = "zeno"
 
@@ -147,14 +154,130 @@ class CHIMERA_OT_update_linked_asset(bpy.types.Operator):
         return {"FINISHED"}
 
 
-_CLASSES = (CHIMERA_OT_link_asset, CHIMERA_OT_update_linked_asset)
+# --- linked files on another machine ----------------------------------------------------
+
+_relinking = False
+
+
+def _entries() -> list[dict[str, Any]]:  # pragma: no cover - Blender runtime
+    out = []
+    for lib in bpy.data.libraries:
+        path = bpy.path.abspath(lib.filepath)
+        out.append({"stored": lib.filepath, "abspath": path, "exists": os.path.isfile(path), "tag": _tag(lib)})
+    return out
+
+
+def _notify(message: str, level: str = "INFO") -> None:  # pragma: no cover - Blender runtime
+    """Show a message in Blender's status bar (reports need an operator and a window)."""
+    print(f"[Zeno] {message}")
+    wm = bpy.context.window_manager
+    window = wm.windows[0] if wm and wm.windows else None
+    if window is None:
+        return
+    with bpy.context.temp_override(window=window, screen=window.screen):
+        bpy.ops.zeno.notify(message=message, level=level)
+
+
+def relink_missing(*, on_done=None) -> int:  # pragma: no cover - Blender runtime
+    """Fetch missing Zeno libraries into this machine's cache and reload them.
+
+    Returns how many libraries are being fetched (0: nothing to do). ``on_done(fixed, failed)``
+    runs on the main thread when finished.
+    """
+    global _relinking
+    todo = missing_libraries(_entries())
+    if not todo or _relinking:
+        return 0
+    _relinking = True
+    names = ", ".join(sorted({t["asset"] or t["filename"] for t in todo}))
+    _notify(f"Fetching {len(todo)} linked Zeno asset(s) for this machine: {names}…")
+    client, cache = make_client(), make_cache()
+    fetched: dict[str, str] = {}
+    failed: list[str] = []
+
+    def work() -> None:
+        for cid in {t["content_id"]: t for t in todo}:
+            item = next(t for t in todo if t["content_id"] == cid)
+            try:
+                fetched[cid] = str(cache.ensure_cached(cid, item["filename"], size=None, client=client))
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"{item['asset'] or item['filename']}: {exc}")
+
+    thread = threading.Thread(target=work, name="zeno-relink", daemon=True)
+    thread.start()
+
+    def finish():
+        global _relinking
+        if thread.is_alive():
+            return 0.5
+        fixed = 0
+        for t in todo:
+            path = fetched.get(t["content_id"])
+            lib = next((lb for lb in bpy.data.libraries if lb.filepath == t["stored"]), None)
+            if not path or lib is None:
+                continue
+            try:
+                lib.filepath = path
+                lib.reload()
+                fixed += 1
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"{t['asset'] or t['filename']}: {exc}")
+        _relinking = False
+        if failed:
+            _notify(f"Fetched {fixed} linked asset(s); {len(failed)} failed: {failed[0]}", "WARNING")
+        else:
+            _notify(f"Fetched {fixed} linked Zeno asset(s) into this machine's cache.")
+        if on_done is not None:
+            on_done(fixed, failed)
+        return None
+
+    bpy.app.timers.register(finish, first_interval=0.5)
+    return len(todo)
+
+
+@persistent
+def _on_load(_dummy) -> None:  # pragma: no cover - Blender runtime
+    prefs = addon_prefs()
+    if prefs is None or getattr(prefs, "fetch_linked_on_open", True):
+        # After load_post returns, so the window is ready for the status-bar message.
+        bpy.app.timers.register(lambda: (relink_missing(), None)[1], first_interval=0.2)
+
+
+class ZENO_OT_fix_linked_assets(bpy.types.Operator):
+    bl_idname = "zeno.fix_linked_assets"
+    bl_label = "Fix Linked Assets"
+    bl_description = "Fetch Zeno assets this file links but this machine doesn't have yet, and reload them"
+
+    def execute(self, context):  # pragma: no cover - Blender runtime
+        if relink_missing() == 0:
+            self.report({"INFO"}, "All linked Zeno assets are on this machine.")
+        return {"FINISHED"}
+
+
+class ZENO_OT_notify(bpy.types.Operator):
+    bl_idname = "zeno.notify"
+    bl_label = "Zeno Message"
+    bl_options = {"INTERNAL"}
+
+    message: bpy.props.StringProperty()
+    level: bpy.props.StringProperty(default="INFO")
+
+    def execute(self, context):  # pragma: no cover - Blender runtime
+        self.report({self.level if self.level in ("INFO", "WARNING", "ERROR") else "INFO"}, self.message)
+        return {"FINISHED"}
+
+
+_CLASSES = (CHIMERA_OT_link_asset, CHIMERA_OT_update_linked_asset, ZENO_OT_fix_linked_assets, ZENO_OT_notify)
 
 
 def register() -> None:
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
+    bpy.app.handlers.load_post.append(_on_load)
 
 
 def unregister() -> None:
+    if _on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_load)
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

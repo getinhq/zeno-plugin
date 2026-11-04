@@ -21,6 +21,14 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         description="Where the Zeno dashboard runs; used to open reviews in the browser",
         default="http://localhost:5173",
     )
+    fetch_linked_on_open: bpy.props.BoolProperty(
+        name="Fetch linked assets on open",
+        description=(
+            "When a file links Zeno assets that aren't in this machine's cache (it was saved on "
+            "another machine), fetch and reload them automatically"
+        ),
+        default=True,
+    )
     show_status_line: bpy.props.BoolProperty(
         name="Task status in the top bar",
         description="Show your current task, its review state, open notes and due date next to the Zeno menu",
@@ -90,6 +98,7 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         col.prop(self, "api_token")
         col.prop(self, "dashboard_url")
         col.prop(self, "show_status_line")
+        col.prop(self, "fetch_linked_on_open")
         col.prop(self, "default_project")
         col.prop(self, "default_asset")
         col.prop(self, "user_id")
