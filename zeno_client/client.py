@@ -291,10 +291,21 @@ class ZenoClient:
             assert isinstance(data, list)
             return [d for d in data if isinstance(d, dict)]
 
-    def update_review_note(self, note_id: str, *, status: str, comment: str | None = None) -> dict[str, Any]:
+    def update_review_note(
+        self,
+        note_id: str,
+        *,
+        status: str,
+        comment: str | None = None,
+        fixed_in_item_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Change a note's status. ``fixed_in_item_id`` names the revision that carries the fix
+        (default: the task's latest revision)."""
         body: dict[str, Any] = {"status": status}
         if comment:
             body["comment"] = comment
+        if fixed_in_item_id:
+            body["fixed_in_item_id"] = fixed_in_item_id
         with self._client() as c:
             resp = c.patch(_join(self.base_url, f"/api/v1/reviews/notes/{note_id}"), json=body)
             data = parse_json(resp, operation="update_review_note")

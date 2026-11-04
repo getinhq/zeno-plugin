@@ -38,6 +38,9 @@ from . import (
     palette,
     preferences,
     review_ops,
+    review_overlay,
+    review_panel,
+    review_state,
     ui_menus,
 )
 from . import qt_host as _qt_host
@@ -65,7 +68,10 @@ def register() -> None:
     palette.register()
     action_ops.register()
     navigator.register()
+    review_state.register()
     review_ops.register()
+    review_panel.register()
+    review_overlay.register()
     ui_menus.register()
 
     wm = bpy.context.window_manager
@@ -84,7 +90,10 @@ def unregister() -> None:
     _qt_host.shutdown_qt_runtime()
 
     ui_menus.unregister()
+    review_overlay.unregister()
+    review_panel.unregister()
     review_ops.unregister()
+    review_state.unregister()
     navigator.unregister()
     action_ops.unregister()
     palette.unregister()
