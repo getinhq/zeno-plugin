@@ -109,6 +109,31 @@ class BlenderReviewHost:
             "file_name": bpy.path.basename(bpy.data.filepath) or "unsaved file",
         }
 
+    def scene_facts(self) -> dict[str, Any]:
+        from .scene_facts import collect_facts
+
+        return collect_facts(bpy.context.scene)
+
+    def apply_fix(self, fix: dict[str, Any], on_done) -> None:
+        """Run a check's fix that changes the file (``update_asset``), then ``on_done(ok, message)``."""
+        if fix.get("action") != "update_asset":
+            on_done(False, f"Unknown fix {fix.get('action')}")
+            return
+
+        def run() -> None:
+            ret = bpy.ops.chimera.update_linked_asset(
+                library=str(fix.get("library") or ""), asset=str(fix.get("asset_code") or ""),
+                version=str(fix.get("version") or ""), representation=str(fix.get("representation") or "blend"),
+            )
+            ok = "FINISHED" in ret
+            try:
+                on_done(ok, f"{fix.get('asset_code')} updated to v{int(fix.get('version') or 0):03d}." if ok
+                        else f"Could not update {fix.get('asset_code')}; see Blender's info bar.")
+            except RuntimeError:  # window closed meanwhile
+                pass
+
+        _run_with_window(run)
+
     def set_frame_range(self, start: int, end: int) -> None:
         scene = bpy.context.scene
         scene.frame_start, scene.frame_end = int(start), int(end)

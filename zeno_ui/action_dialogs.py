@@ -69,12 +69,14 @@ class ZenoNavigatorActionDialog:
         launch_hint: dict[str, Any] | None = None,
         prefs_default_project: str = "",
         on_load_entity: Callable[..., Any] | None = None,
+        on_link_entity: Callable[..., Any] | None = None,
         stay_on_top: bool = False,
     ) -> None:
         QtWidgets, QtCore, _ = get_qt_modules()
         self._client = client
         self._launch_hint = dict(launch_hint or {})
         self._on_load_entity = on_load_entity
+        self._on_link_entity = on_link_entity
         self._assets: list[dict[str, Any]] = []
         self._groups_by_asset_id: dict[str, list[dict[str, Any]]] = {}
         self._asset_ctx: _AssetContext | None = None
@@ -127,14 +129,20 @@ class ZenoNavigatorActionDialog:
         row = QtWidgets.QHBoxLayout()
         self._load = QtWidgets.QPushButton("Load Entity")
         self._load.setProperty("primary", True)
+        self._load.setToolTip("Open the asset's file to work on it")
+        self._link = QtWidgets.QPushButton("Link into this file")
+        self._link.setToolTip("Bring this version into the file you have open (a shot, for example)")
         self._refresh = QtWidgets.QPushButton("Refresh")
         self._cancel = QtWidgets.QPushButton("Cancel")
         row.addWidget(self._refresh)
         row.addStretch(1)
         row.addWidget(self._cancel)
+        if on_link_entity is not None:
+            row.addWidget(self._link)
         row.addWidget(self._load)
         root.addLayout(row)
 
+        self._link.clicked.connect(self._on_link_clicked)
         self._tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         self._stage.currentIndexChanged.connect(lambda _=None: self._rebuild_versions())
         self._version.currentIndexChanged.connect(lambda _=None: self._rebuild_representations())
@@ -283,6 +291,19 @@ class ZenoNavigatorActionDialog:
             reps.add("blend")
         for rep in sorted(reps):
             self._representation.addItem(rep, rep)
+
+    def _on_link_clicked(self) -> None:
+        if not self._asset_ctx:
+            self._status.setText("Select an asset first.")
+            return
+        if self._on_link_entity:
+            self._on_link_entity(
+                project=self._asset_ctx.project_code,
+                asset=self._asset_ctx.asset_code,
+                version=str(self._version.currentData() or "").strip() or "latest",
+                representation=str(self._representation.currentData() or "").strip() or "blend",
+            )
+        self._status.setText(f"Linking {self._asset_ctx.asset_code} into this file…")
 
     def _on_load_clicked(self) -> None:
         if not self._asset_ctx:

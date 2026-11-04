@@ -296,6 +296,22 @@ class ZenoClient:
             resp = c.post(_join(self.base_url, "/api/v1/notifications/mark-read"), json={"ids": list(ids)})
             parse_json(resp, operation="mark_notifications_read")
 
+    def put_scene_facts(self, shot_id: str, facts: dict[str, Any]) -> dict[str, Any]:
+        """Report what the shot file contains; returns ``{"facts", "report"}`` (see the API)."""
+        with self._client() as c:
+            resp = c.put(_join(self.base_url, f"/api/v1/shots/{shot_id}/scene-facts"), json=facts)
+            data = parse_json(resp, operation="put_scene_facts")
+            assert isinstance(data, dict)
+            return data
+
+    def lookup_versions(self, content_ids: list[str]) -> list[dict[str, Any]]:
+        """Asset versions stored under these content ids (unknown ids are left out)."""
+        with self._client() as c:
+            resp = c.post(_join(self.base_url, "/api/v1/versions/lookup"), json={"content_ids": list(content_ids)})
+            data = parse_json(resp, operation="lookup_versions")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
     def get_shot(self, shot_id: str) -> dict[str, Any]:
         with self._client() as c:
             resp = c.get(_join(self.base_url, f"/api/v1/shots/{shot_id}"))

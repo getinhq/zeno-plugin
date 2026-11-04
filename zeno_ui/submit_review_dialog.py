@@ -10,6 +10,9 @@ The DCC supplies a host:
 - ``set_frame_range(start, end)``
 - ``pending(task_id) -> list[str]`` / ``set_pending(task_id, note_ids)``
 - ``default_task_id(task_ids) -> str``; optional ``on_tasks(tasks)``
+- optional ``scene_facts() -> dict`` (sent to ``PUT /shots/{id}/scene-facts``; the answer adds
+  checks on linked asset versions and casting) and ``apply_fix(fix, on_done)`` for fixes
+  that change the file (``update_asset``)
 - ``render_and_submit(task_id, *, description, as_sequence, fixes, on_done, on_stage)``:
   render, upload in the background, then call ``on_done(result)`` on the UI thread with
   ``error`` or ``item``, ``url``, ``fixed`` and ``fix_errors``. ``on_stage("uploading")``
@@ -22,12 +25,13 @@ from typing import Any
 
 from zeno_client.client import ZenoClient
 from zeno_client.review import frames_label, submit_checks
+from zeno_client.scene_facts import facts_checks
 from zeno_ui.qt_compat import get_qt_modules
 from zeno_ui.qt_workers import make_async_runner
 from zeno_ui.stylesheet import apply_stylesheet, theme_tokens
 
 SCENE_POLL_MS = 500
-_ICON = {"ok": "✓", "warning": "!", "error": "✕"}
+_ICON = {"ok": "✓", "info": "i", "warning": "!", "error": "✕"}
 
 
 def _qss(t: dict[str, str]) -> str:
@@ -41,6 +45,7 @@ QFrame#checkRow[level="error"] {{ border-color: {t['color.danger']}; }}
 QLabel#icon_ok {{ color: {t['color.success']}; font-weight: bold; }}
 QLabel#icon_warning {{ color: {t['color.warning']}; font-weight: bold; }}
 QLabel#icon_error {{ color: {t['color.danger']}; font-weight: bold; }}
+QLabel#icon_info {{ color: {t['color.info']}; font-weight: bold; }}
 QPushButton#fixButton {{ padding: 3px 10px; color: {t['color.primary']}; border-color: {t['color.primary']}; background: transparent; }}
 QPushButton#fixButton:hover {{ background: {t['color.selection-bg']}; }}
 QFrame#formatCard {{ background: {t['color.card']}; border: 1px solid {t['color.border']}; border-radius: 6px; }}
@@ -79,6 +84,7 @@ class ZenoSubmitReviewDialog:
         self._busy = False
         self._done_url = ""
         self._seq = 0
+        self._notice: tuple[str, str] | None = None  # shown once the next load finishes
 
         self._dlg = QtWidgets.QDialog(parent)
         self._dlg.setWindowTitle("Zeno · Submit for Review")
@@ -223,6 +229,12 @@ class ZenoSubmitReviewDialog:
     def _load(self, *, with_tasks: bool) -> None:
         self._seq += 1
         seq, client, task_id = self._seq, self._client, self._task_id
+        facts = None
+        if hasattr(self._host, "scene_facts"):
+            try:
+                facts = self._host.scene_facts()  # scene access stays on the UI thread
+            except Exception:  # noqa: BLE001 - facts are advice; the window works without them
+                facts = None
         self._set_status("Checking with Zeno…")
 
         def call() -> dict[str, Any]:
@@ -232,7 +244,7 @@ class ZenoSubmitReviewDialog:
                 if task_id not in [str(t.get("id")) for t in out["tasks"]]:
                     return out
             if task_id:
-                out["ctx"] = _task_context(client, task_id, out.get("tasks"))
+                out["ctx"] = _task_context(client, task_id, out.get("tasks"), facts)
             return out
 
         self._runner.submit(call)
@@ -240,7 +252,8 @@ class ZenoSubmitReviewDialog:
     def _on_loaded(self, out: dict[str, Any]) -> None:
         if out.get("seq") != self._seq:
             return
-        self._set_status("")
+        self._set_status(*(self._notice or ("",)))
+        self._notice = None
         if "tasks" in out:
             self._tasks = list(out["tasks"])
             if hasattr(self._host, "on_tasks"):
@@ -355,7 +368,7 @@ class ZenoSubmitReviewDialog:
             last=self._ctx.get("last"),
             sequences_off=self._ctx.get("sequences_off"),
             as_sequence=self._frames.isChecked(),
-        )
+        ) + facts_checks(self._ctx.get("facts_report"))
 
     def _render_checks(self) -> None:
         QtWidgets, _, _ = get_qt_modules()
@@ -376,11 +389,16 @@ class ZenoSubmitReviewDialog:
             lay.addWidget(icon)
             lay.addWidget(text, 1)
             fix = c.get("fix")
+            handler = None
             if fix and fix.get("action") == "use_shot_range" and hasattr(self._host, "set_frame_range"):
+                handler = lambda _=False, f=fix: self._host.set_frame_range(f["start"], f["end"])  # noqa: E731
+            elif fix and fix.get("action") == "update_asset" and hasattr(self._host, "apply_fix"):
+                handler = lambda _=False, f=fix: self._apply_fix(f)  # noqa: E731
+            if handler is not None:
                 btn = QtWidgets.QPushButton(fix["label"])
                 btn.setObjectName("fixButton")
                 btn.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-                btn.clicked.connect(lambda _=False, f=fix: self._host.set_frame_range(f["start"], f["end"]))
+                btn.clicked.connect(handler)
                 lay.addWidget(btn)
             self._checks_box.addWidget(row)
             row.show()
@@ -399,6 +417,17 @@ class ZenoSubmitReviewDialog:
             label = f"Render {frames} frames && Submit" if frames > 0 else "Render && Submit"
             self._go.setText(label + (f" · {pending} fix{'es' if pending != 1 else ''}" if pending else ""))
         self._dlg.layout().activate()  # wrapped warnings get their full height straight away
+
+    def _apply_fix(self, fix: dict[str, Any]) -> None:
+        self._set_status(f"{fix['label']} for {fix.get('asset_code')}…", "statusBusy")
+
+        def done(ok: bool, message: str) -> None:
+            self._set_status(message, "statusOk" if ok else "statusError")
+            if ok:
+                self._notice = (message, "statusOk")
+                self._load(with_tasks=False)  # report the updated file and re-check
+
+        self._host.apply_fix(fix, done)
 
     def _set_status(self, text: str, kind: str = "muted") -> None:
         self._status.setText(text)
@@ -488,9 +517,12 @@ class ZenoSubmitReviewDialog:
         return self._dlg
 
 
-def _task_context(client: ZenoClient, task_id: str, tasks: list[dict[str, Any]] | None) -> dict[str, Any]:
-    """Shot, last revision, open notes and the sequence switch for one task (worker thread)."""
-    ctx: dict[str, Any] = {"shot": None, "last": None, "notes": [], "sequences_off": None}
+def _task_context(
+    client: ZenoClient, task_id: str, tasks: list[dict[str, Any]] | None, facts: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Shot, last revision, open notes, the sequence switch and (for shot tasks with scene
+    facts) the facts report, for one task (worker thread)."""
+    ctx: dict[str, Any] = {"shot": None, "last": None, "notes": [], "sequences_off": None, "facts_report": None}
     task = next((t for t in tasks or [] if str(t.get("id")) == task_id), None)
     if task is None:
         task = next((t for t in client.list_my_tasks() if str(t.get("id")) == task_id), None)
@@ -499,6 +531,11 @@ def _task_context(client: ZenoClient, task_id: str, tasks: list[dict[str, Any]] 
             ctx["shot"] = client.get_shot(str(task["shot_id"]))
         except Exception:  # noqa: BLE001 - range check is advice, not a blocker
             ctx["shot"] = {"shot_code": "the shot"}
+        if facts is not None:
+            try:
+                ctx["facts_report"] = client.put_scene_facts(str(task["shot_id"]), facts).get("report")
+            except Exception:  # noqa: BLE001 - older server without scene facts
+                pass
     try:
         ctx["last"] = client.latest_review_item(task_id)
     except Exception:  # noqa: BLE001

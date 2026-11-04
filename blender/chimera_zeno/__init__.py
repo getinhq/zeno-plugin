@@ -40,6 +40,7 @@ from . import (
     review_ops,
     review_overlay,
     review_state,
+    scene_facts,
     task_status,
     ui_menus,
 )
@@ -69,6 +70,7 @@ def register() -> None:
     action_ops.register()
     navigator.register()
     review_state.register()
+    scene_facts.register()
     review_ops.register()
     review_overlay.register()
     ui_menus.register()
@@ -93,6 +95,7 @@ def unregister() -> None:
     ui_menus.unregister()
     review_overlay.unregister()
     review_ops.unregister()
+    scene_facts.unregister()
     review_state.unregister()
     navigator.unregister()
     action_ops.unregister()

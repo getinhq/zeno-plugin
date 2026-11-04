@@ -209,6 +209,21 @@ def _queued_load(
     qt_host.queue_main_thread(_do)
 
 
+def _queued_link(*, project: str, asset: str, version: str, representation: str) -> None:
+    """Link an asset version into the open file, outside Qt's event processing."""
+
+    def _do() -> None:
+        try:
+            ret = bpy.ops.chimera.link_asset(
+                "EXEC_DEFAULT", project=project, asset=asset, version=version, representation=representation
+            )
+            print(f"[chimera.link] operator result={ret!r}", flush=True)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+
+    qt_host.queue_main_thread(_do)
+
+
 def _queued_publish(
     *,
     project: str,
@@ -356,6 +371,7 @@ def show_navigator_action_qt(operator: Any | None = None) -> bool:
             launch_hint=hint,
             prefs_default_project=prefs_default,
             on_load_entity=_queued_load,
+            on_link_entity=_queued_link,
             stay_on_top=True,
         )
         qt_host.retain_dialog(dlg)
