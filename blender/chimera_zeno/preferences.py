@@ -50,6 +50,14 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         ),
         default=True,
     )
+    preload_qt_ui: bpy.props.BoolProperty(
+        name="Get Zeno windows ready at startup",
+        description=(
+            "Load Qt in the background a few seconds after Blender starts, so the first "
+            "Zeno window opens straight away instead of after a pause"
+        ),
+        default=True,
+    )
     use_hub_mode: bpy.props.BoolProperty(
         name="Use Chimera Hub (recommended)",
         description=(
@@ -87,6 +95,7 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         qt_box = layout.box()
         qt_box.label(text="Dashboard UI (Qt) — Blender-side fallback")
         qt_box.prop(self, "use_dashboard_qt_ui")
+        qt_box.prop(self, "preload_qt_ui")
         qt_box.prop(self, "auto_install_pyside")
         row = qt_box.row(align=True)
         row.operator("chimera.check_qt_status", icon="INFO")

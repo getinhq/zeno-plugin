@@ -554,7 +554,97 @@ def reload_review_notes_qt() -> None:
         _review_notes.reload()
 
 
+# ---------------------------------------------------------------------------
+# Warm-up: pay Qt's one-time costs while Blender is idle, not on first click.
+# ---------------------------------------------------------------------------
+
+# Importing PySide, creating the QApplication, loading the fonts and parsing the
+# stylesheet cost a second or more the first time, which made the first Zeno
+# window feel slow to open. Each step runs on its own timer tick so Blender's UI
+# never stalls for the whole lot at once.
+_WARM_DELAY_S = 3.0
+_warm_steps: list[Any] = []
+
+
+def _warm_wanted() -> bool:
+    if bpy.app.background:
+        return False
+    prefs = addon_prefs()
+    if prefs is None:
+        return True
+    return bool(
+        getattr(prefs, "preload_qt_ui", True)
+        and getattr(prefs, "use_dashboard_qt_ui", True)
+        and not getattr(prefs, "use_hub_mode", False)
+    )
+
+
+def _warm_import_qt() -> bool:
+    pyside_provision.ensure_pyside_on_path()
+    if not pyside_provision.pyside_available():
+        return False  # the first click offers the install, as before
+    from zeno_ui.qt_compat import get_qt_modules
+
+    get_qt_modules()
+    return True
+
+
+def _warm_app() -> bool:
+    _, err = qt_host.ensure_qt_runtime()
+    return err is None
+
+
+def _warm_dialogs() -> bool:
+    import zeno_client  # noqa: F401  (pulls in httpx, used by every dialog)
+    import zeno_ui.action_dialogs  # noqa: F401
+    import zeno_ui.qt_dialogs  # noqa: F401
+    import zeno_ui.review_notes_dialog  # noqa: F401
+    import zeno_ui.submit_review_dialog  # noqa: F401
+    from zeno_ui.stylesheet import warm_up
+
+    warm_up()
+    return True
+
+
+def _warm_tick() -> float | None:
+    if not _warm_steps:
+        return None
+    step = _warm_steps.pop(0)
+    try:
+        keep_going = step()
+    except Exception as exc:  # never let a warm-up problem reach the artist
+        print(f"[chimera] Qt warm-up skipped: {exc}")
+        keep_going = False
+    if not keep_going:
+        _warm_steps.clear()
+        return None
+    return 0.2 if _warm_steps else None
+
+
+def cancel_warm_up() -> None:
+    _warm_steps.clear()
+    try:
+        if bpy.app.timers.is_registered(_warm_tick):
+            bpy.app.timers.unregister(_warm_tick)
+    except Exception:  # pragma: no cover - Blender runtime
+        pass
+
+
+def schedule_warm_up() -> None:
+    """Prepare the Qt windows a few seconds after Blender starts (see above)."""
+    if _warm_steps or not _warm_wanted():
+        return
+    _warm_steps.extend([_warm_import_qt, _warm_app, _warm_dialogs])
+    try:
+        bpy.app.timers.register(_warm_tick, first_interval=_WARM_DELAY_S, persistent=True)
+    except Exception as exc:  # pragma: no cover - Blender runtime
+        _warm_steps.clear()
+        print(f"[chimera] could not schedule Qt warm-up: {exc}")
+
+
 __all__ = [
+    "cancel_warm_up",
+    "schedule_warm_up",
     "show_review_notes_qt",
     "reload_review_notes_qt",
     "show_submit_review_qt",

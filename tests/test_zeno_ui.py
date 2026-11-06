@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pathlib
+
 from zeno_ui.stylesheet import load_stylesheet
 from zeno_ui.workflows import (
     decode_project,
@@ -15,6 +17,19 @@ def test_load_stylesheet_substitutes_all_tokens() -> None:
     assert "{font." not in qss
     assert "#0a0a0a" in qss
     assert "#d4ff00" in qss
+    assert "{path." not in qss
+
+
+def test_stylesheet_assets_are_bundled() -> None:
+    import re
+    from importlib import resources
+
+    qss = load_stylesheet()
+    icons = re.findall(r'url\("([^"]+)"\)', qss)
+    assert icons and all(pathlib.Path(p).is_file() for p in icons)
+    fonts = resources.files("zeno_ui") / "fonts"
+    assert (fonts / "SpaceMono-Regular.ttf").is_file() and (fonts / "SpaceMono-Bold.ttf").is_file()
+    assert "Space Mono" in qss
 
 
 def test_decode_project() -> None:

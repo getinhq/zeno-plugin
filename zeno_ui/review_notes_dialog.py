@@ -60,7 +60,7 @@ QFrame#noteCard[here="true"] QPushButton#frameChip {{
 QLabel#statusOpen {{ color: {t['color.danger']}; font-size: 9pt; }}
 QLabel#statusFixed {{ color: {t['color.warning']}; font-size: 9pt; }}
 QLabel#statusVerified {{ color: {t['color.success']}; font-size: 9pt; }}
-QLabel#muted, QLabel#reply {{ color: {t['color.muted']}; font-size: 9pt; }}
+QLabel#reply {{ color: {t['color.muted']}; font-size: 9pt; }}
 QLabel#noteBody {{ color: {t['color.foreground']}; }}
 QLabel#drawTag {{
     color: {t['color.info']};
@@ -72,17 +72,6 @@ QLabel#drawTag {{
 QLabel#summary {{ color: {t['color.foreground']}; font-size: 9pt; }}
 QLabel#frameNow {{ color: {t['color.muted']}; font-size: 9pt; padding: 0 4px; }}
 QPushButton#stepButton {{ padding: 3px 10px; font-weight: bold; }}
-QCheckBox {{ background: transparent; spacing: 8px; }}
-QCheckBox::indicator {{
-    width: 14px; height: 14px;
-    border: 1px solid {t['color.muted']};
-    border-radius: 3px;
-    background: {t['color.input-bg']};
-}}
-QCheckBox::indicator:checked {{
-    background: {t['color.primary']};
-    border-color: {t['color.primary']};
-}}
 QCheckBox#tickFix:checked {{ color: {t['color.primary']}; }}
 QScrollArea {{ border: none; background: transparent; }}
 QWidget#cards {{ background: transparent; }}
@@ -121,15 +110,12 @@ class ZenoReviewNotesDialog:
         apply_stylesheet(self._dlg, _qss(theme_tokens()))
 
         root = QtWidgets.QHBoxLayout(self._dlg)
-        accent = QtWidgets.QFrame(self._dlg)
-        accent.setObjectName("lineAccent")
-        root.addWidget(accent)
         col = QtWidgets.QVBoxLayout()
         col.setSpacing(8)
         root.addLayout(col, 1)
 
         title = QtWidgets.QLabel("Review Notes")
-        title.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        title.setObjectName("dialogTitle")
         col.addWidget(title)
         sub = QtWidgets.QLabel("Tick what you fixed. It goes to the reviewer with your next submission.")
         sub.setObjectName("muted")

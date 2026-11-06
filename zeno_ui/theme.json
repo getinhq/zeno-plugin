@@ -21,7 +21,7 @@
     "scrollbar-thumb-hover": "#404040"
   },
   "font": {
-    "family": "'Space Mono', 'JetBrains Mono', 'Consolas', monospace",
+    "family": "'Space Mono', 'Menlo', monospace",
     "size-pt": 10
   }
 }

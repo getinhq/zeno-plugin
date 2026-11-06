@@ -36,8 +36,6 @@ _ICON = {"ok": "✓", "info": "i", "warning": "!", "error": "✕"}
 
 def _qss(t: dict[str, str]) -> str:
     return f"""
-QLabel#section {{ color: {t['color.muted']}; font-size: 8pt; font-weight: bold; letter-spacing: 1px; padding-top: 6px; }}
-QLabel#muted {{ color: {t['color.muted']}; font-size: 9pt; }}
 QLabel#context {{ color: {t['color.foreground']}; font-size: 9pt; }}
 QFrame#checkRow {{ background: {t['color.card']}; border: 1px solid {t['color.border']}; border-radius: 6px; }}
 QFrame#checkRow[level="warning"] {{ border-color: {t['color.warning']}; }}
@@ -51,13 +49,8 @@ QPushButton#fixButton:hover {{ background: {t['color.selection-bg']}; }}
 QFrame#formatCard {{ background: {t['color.card']}; border: 1px solid {t['color.border']}; border-radius: 6px; }}
 QFrame#formatCard[selected="true"] {{ border-color: {t['color.primary']}; }}
 QFrame#formatCard[disabled="true"] {{ background: {t['color.background']}; }}
-QRadioButton {{ background: transparent; font-weight: bold; spacing: 8px; }}
+QRadioButton {{ font-weight: bold; }}
 QRadioButton:disabled {{ color: {t['color.muted']}; }}
-QRadioButton::indicator {{ width: 12px; height: 12px; border-radius: 7px; border: 1px solid {t['color.muted']}; background: {t['color.input-bg']}; }}
-QRadioButton::indicator:checked {{ background: {t['color.primary']}; border-color: {t['color.primary']}; }}
-QCheckBox {{ background: transparent; spacing: 8px; }}
-QCheckBox::indicator {{ width: 14px; height: 14px; border: 1px solid {t['color.muted']}; border-radius: 3px; background: {t['color.input-bg']}; }}
-QCheckBox::indicator:checked {{ background: {t['color.primary']}; border-color: {t['color.primary']}; }}
 QLabel#statusOk {{ color: {t['color.success']}; }}
 QLabel#statusError {{ color: {t['color.danger']}; }}
 QLabel#statusBusy {{ color: {t['color.primary']}; }}
@@ -95,15 +88,12 @@ class ZenoSubmitReviewDialog:
         apply_stylesheet(self._dlg, _qss(theme_tokens()))
 
         root = QtWidgets.QHBoxLayout(self._dlg)
-        accent = QtWidgets.QFrame(self._dlg)
-        accent.setObjectName("lineAccent")
-        root.addWidget(accent)
         col = QtWidgets.QVBoxLayout()
         col.setSpacing(8)
         root.addLayout(col, 1)
 
         title = QtWidgets.QLabel("Submit for Review")
-        title.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        title.setObjectName("dialogTitle")
         col.addWidget(title)
         sub = QtWidgets.QLabel("Playblasts the camera view and sends it to your reviewer.")
         sub.setObjectName("muted")
@@ -192,7 +182,7 @@ class ZenoSubmitReviewDialog:
         return label
 
     def _format_card(self, title: str, blurb: str) -> tuple[Any, Any]:
-        QtWidgets, _, _ = get_qt_modules()
+        QtWidgets, QtCore, _ = get_qt_modules()
         card = QtWidgets.QFrame()
         card.setObjectName("formatCard")
         lay = QtWidgets.QVBoxLayout(card)
@@ -201,6 +191,9 @@ class ZenoSubmitReviewDialog:
         note = QtWidgets.QLabel(blurb)
         note.setObjectName("muted")
         note.setWordWrap(True)
+        # Word-wrapped labels side by side under-report their height; reserve three lines.
+        note.setMinimumHeight(note.fontMetrics().lineSpacing() * 3)
+        note.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
         lay.addWidget(radio)
         lay.addWidget(note)
         card._blurb = note  # type: ignore[attr-defined]

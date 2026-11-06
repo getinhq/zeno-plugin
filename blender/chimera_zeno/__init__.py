@@ -59,7 +59,8 @@ def register() -> None:
     # probe (and sys.path patch) on first palette click. Doing it again at
     # register time is pure startup tax, so we skip it here. The one-liner
     # log used to confirm PySide was importable is now emitted only when
-    # the user opens the palette.
+    # the user opens the palette. The Qt warm-up scheduled below runs a few
+    # seconds after startup, one small step per timer tick.
 
     launch_context_mod.register_launch_context_prefs()
     preferences.register()
@@ -83,12 +84,19 @@ def register() -> None:
         kmi = km.keymap_items.new("chimera.palette_open", type="K", value="PRESS", ctrl=True)
         _addon_keymaps.append((km, kmi))
 
+    from . import blender_qt
+
+    blender_qt.schedule_warm_up()
+
 
 def unregister() -> None:
     for km, kmi in _addon_keymaps:
         km.keymap_items.remove(kmi)
     _addon_keymaps.clear()
 
+    from . import blender_qt
+
+    blender_qt.cancel_warm_up()
     _qt_host.shutdown_qt_runtime()
 
     task_status.unregister()

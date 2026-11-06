@@ -15,7 +15,7 @@ from zeno_ui.data_source import (
 from zeno_ui.dcc_detect import detect_dcc
 from zeno_ui.qt_compat import get_qt_modules
 from zeno_ui.qt_workers import make_async_runner, make_debounced
-from zeno_ui.stylesheet import apply_stylesheet
+from zeno_ui.stylesheet import apply_stylesheet, field_label
 from zeno_ui.workflows import (
     PaletteRefreshResult,
     resolve_palette_default_project,
@@ -57,7 +57,7 @@ class ZenoNavigatorDialog:
         self._on_open = on_open
         self._cache = cache or global_cache()
         self._dlg = QtWidgets.QDialog(parent)
-        self._dlg.setWindowTitle("Zeno Navigator")
+        self._dlg.setWindowTitle("Zeno · Navigator")
         self._dlg.setMinimumWidth(520)
         if stay_on_top:
             self._dlg.setWindowFlags(
@@ -66,18 +66,15 @@ class ZenoNavigatorDialog:
         apply_stylesheet(self._dlg)
 
         root = QtWidgets.QHBoxLayout(self._dlg)
-        accent = QtWidgets.QFrame(self._dlg)
-        accent.setObjectName("lineAccent")
-        root.addWidget(accent)
 
         col = QtWidgets.QVBoxLayout()
         root.addLayout(col, 1)
 
         title = QtWidgets.QLabel("Navigator")
-        title.setStyleSheet("font-weight: bold; font-size: 12pt; color: #e5e5e5;")
+        title.setObjectName("dialogTitle")
         col.addWidget(title)
         sub = QtWidgets.QLabel("Browse project hierarchy and open assets")
-        sub.setStyleSheet("color: #888888; font-size: 9pt;")
+        sub.setObjectName("muted")
         col.addWidget(sub)
 
         self._project = QtWidgets.QComboBox(self._dlg)
@@ -87,22 +84,22 @@ class ZenoNavigatorDialog:
         self._representation = QtWidgets.QLineEdit(self._dlg)
         self._representation.setText(default_representation)
 
-        col.addWidget(QtWidgets.QLabel("Project"))
+        col.addWidget(field_label("Project"))
         col.addWidget(self._project)
-        col.addWidget(QtWidgets.QLabel("Asset"))
+        col.addWidget(field_label("Asset"))
         col.addWidget(self._asset)
 
         row = QtWidgets.QHBoxLayout()
-        row.addWidget(QtWidgets.QLabel("Version"))
+        row.addWidget(field_label("Version"))
         row.addWidget(self._version)
         col.addLayout(row)
         row2 = QtWidgets.QHBoxLayout()
-        row2.addWidget(QtWidgets.QLabel("Representation"))
+        row2.addWidget(field_label("Representation"))
         row2.addWidget(self._representation)
         col.addLayout(row2)
 
         self._status = QtWidgets.QLabel("Loading projects…")
-        self._status.setStyleSheet("color: #888888; font-size: 9pt;")
+        self._status.setObjectName("muted")
         col.addWidget(self._status)
 
         btn_row = QtWidgets.QHBoxLayout()
@@ -252,7 +249,7 @@ class ZenoPaletteDialog:
         self._tasks_project_code: str = ""
         self._system_username = self._resolve_system_username().lower()
         self._dlg = QtWidgets.QDialog(parent)
-        self._dlg.setWindowTitle("Chimera Command Palette")
+        self._dlg.setWindowTitle("Zeno · Command Palette")
         self._dlg.setMinimumWidth(480)
         if stay_on_top:
             self._dlg.setWindowFlags(
@@ -261,17 +258,14 @@ class ZenoPaletteDialog:
         apply_stylesheet(self._dlg)
 
         root = QtWidgets.QHBoxLayout(self._dlg)
-        accent = QtWidgets.QFrame(self._dlg)
-        accent.setObjectName("lineAccent")
-        root.addWidget(accent)
         col = QtWidgets.QVBoxLayout()
         root.addLayout(col, 1)
 
         title = QtWidgets.QLabel("Command Palette")
-        title.setStyleSheet("font-weight: bold; font-size: 12pt; color: #e5e5e5;")
+        title.setObjectName("dialogTitle")
         col.addWidget(title)
         sub = QtWidgets.QLabel("Search assets, load versions, and publish")
-        sub.setStyleSheet("color: #888888; font-size: 9pt;")
+        sub.setObjectName("muted")
         col.addWidget(sub)
 
         self._project = QtWidgets.QLineEdit(self._dlg)
@@ -313,26 +307,26 @@ class ZenoPaletteDialog:
         self._version = QtWidgets.QLineEdit(self._dlg)
         self._version.setText("latest")
 
-        col.addWidget(QtWidgets.QLabel("Project"))
+        col.addWidget(field_label("Project"))
         col.addWidget(self._project)
-        col.addWidget(QtWidgets.QLabel("Search"))
+        col.addWidget(field_label("Search"))
         col.addWidget(self._query)
-        col.addWidget(QtWidgets.QLabel("Action"))
+        col.addWidget(field_label("Action"))
         col.addWidget(self._action)
-        col.addWidget(QtWidgets.QLabel("Pipeline stage"))
+        col.addWidget(field_label("Pipeline stage"))
         col.addWidget(self._stage)
-        col.addWidget(QtWidgets.QLabel("Asset"))
+        col.addWidget(field_label("Asset"))
         col.addWidget(self._asset)
-        col.addWidget(QtWidgets.QLabel("Task (required for publish)"))
+        col.addWidget(field_label("Task (required for publish)"))
         self._task_search.setPlaceholderText("Search tasks by title, stage, or status…")
         col.addWidget(self._task_search)
         col.addWidget(self._task)
-        col.addWidget(QtWidgets.QLabel("Version"))
+        col.addWidget(field_label("Version"))
         col.addWidget(self._version)
 
         preview = QtWidgets.QLabel("")
         preview.setWordWrap(True)
-        preview.setStyleSheet("color: #888888; font-size: 9pt;")
+        preview.setObjectName("muted")
         self._preview = preview
         col.addWidget(preview)
 
@@ -700,16 +694,16 @@ class ZenoPaletteDialog:
         """Compact modal asking the artist for title / body / entity / attachment."""
         QtWidgets, QtCore, _ = get_qt_modules()
         dlg = QtWidgets.QDialog(self._dlg)
-        dlg.setWindowTitle("Report Issue")
+        dlg.setWindowTitle("Zeno · Report Issue")
         dlg.setMinimumWidth(420)
         apply_stylesheet(dlg)
 
         root = QtWidgets.QVBoxLayout(dlg)
-        root.addWidget(QtWidgets.QLabel("Title"))
+        root.addWidget(field_label("Title"))
         title_edit = QtWidgets.QLineEdit(dlg)
         root.addWidget(title_edit)
 
-        root.addWidget(QtWidgets.QLabel("Details"))
+        root.addWidget(field_label("Details"))
         body_edit = QtWidgets.QPlainTextEdit(dlg)
         body_edit.setMinimumHeight(120)
         root.addWidget(body_edit)
@@ -717,7 +711,7 @@ class ZenoPaletteDialog:
         # Entity (asset) selection. The palette's current asset is pre-selected
         # but the artist can switch or drop to "No entity" if the issue is
         # project-wide.
-        root.addWidget(QtWidgets.QLabel("Asset (optional)"))
+        root.addWidget(field_label("Asset (optional)"))
         asset_combo = QtWidgets.QComboBox(dlg)
         asset_combo.addItem("— No asset (project-level) —", "")
         for a in assets or []:
@@ -735,7 +729,7 @@ class ZenoPaletteDialog:
         attach_row = QtWidgets.QHBoxLayout()
         attachment_path = {"path": ""}
         attach_label = QtWidgets.QLabel("No attachment")
-        attach_label.setStyleSheet("color: #888888; font-size: 9pt;")
+        attach_label.setObjectName("muted")
 
         def choose_file() -> None:
             f, _flt = QtWidgets.QFileDialog.getOpenFileName(dlg, "Attach media")
@@ -758,11 +752,11 @@ class ZenoPaletteDialog:
         meta_line = QtWidgets.QLabel(
             f"Reporter: {reporter}    DCC: {dcc_name}    Project: {project or '—'}"
         )
-        meta_line.setStyleSheet("color: #888888; font-size: 9pt;")
+        meta_line.setObjectName("muted")
         root.addWidget(meta_line)
 
         err_label = QtWidgets.QLabel("")
-        err_label.setStyleSheet("color: #ff6b6b; font-size: 9pt;")
+        err_label.setObjectName("error")
         err_label.setWordWrap(True)
         root.addWidget(err_label)
 
