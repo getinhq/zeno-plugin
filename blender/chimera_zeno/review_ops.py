@@ -66,8 +66,11 @@ def playblast(context, out_dir: Path) -> Path:  # pragma: no cover - Blender run
         "ff_codec": render.ffmpeg.codec,
         "ff_crf": render.ffmpeg.constant_rate_factor,
         "ff_audio": render.ffmpeg.audio_codec,
+        "use_preview_range": scene.use_preview_range,
     }
     try:
+        # The viewport render follows the preview range, which jumping to a note sets.
+        scene.use_preview_range = False
         render.filepath = str(out_dir / "playblast_")
         render.use_file_extension = True
         render.resolution_percentage = playblast_percentage(render.resolution_x, render.resolution_percentage)
@@ -95,6 +98,7 @@ def playblast(context, out_dir: Path) -> Path:  # pragma: no cover - Blender run
         render.ffmpeg.codec = saved["ff_codec"]
         render.ffmpeg.constant_rate_factor = saved["ff_crf"]
         render.ffmpeg.audio_codec = saved["ff_audio"]
+        scene.use_preview_range = saved["use_preview_range"]
     movies = sorted(out_dir.glob("playblast_*"), key=lambda p: p.stat().st_mtime)
     if not movies:
         raise RuntimeError("Blender did not write a playblast")
@@ -124,8 +128,10 @@ def playblast_sequence(context, out_dir: Path) -> dict[int, Path]:  # pragma: no
         "color_mode": settings.color_mode,
         "compression": settings.compression,
         "stamps": {k: getattr(render, k) for k in _VOLATILE_STAMPS if hasattr(render, k)},
+        "use_preview_range": scene.use_preview_range,
     }
     try:
+        scene.use_preview_range = False
         render.filepath = str(out_dir / "frame_")
         render.use_file_extension = True
         render.resolution_percentage = playblast_percentage(render.resolution_x, render.resolution_percentage)
@@ -155,6 +161,7 @@ def playblast_sequence(context, out_dir: Path) -> dict[int, Path]:  # pragma: no
         settings.compression = saved["compression"]
         for key, value in saved["stamps"].items():
             setattr(render, key, value)
+        scene.use_preview_range = saved["use_preview_range"]
     frames = {}
     for path in out_dir.glob("frame_*.png"):
         digits = path.stem.split("_")[-1]
