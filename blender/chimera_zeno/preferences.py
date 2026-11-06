@@ -21,6 +21,19 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         description="Where the Zeno dashboard runs; used to open reviews in the browser",
         default="http://localhost:5173",
     )
+    fetch_linked_on_open: bpy.props.BoolProperty(
+        name="Fetch linked assets on open",
+        description=(
+            "When a file links Zeno assets that aren't in this machine's cache (it was saved on "
+            "another machine), fetch and reload them automatically"
+        ),
+        default=True,
+    )
+    show_status_line: bpy.props.BoolProperty(
+        name="Task status in the top bar",
+        description="Show your current task, its review state, open notes and due date next to the Zeno menu",
+        default=True,
+    )
     default_project: bpy.props.StringProperty(name="Default Project", default="ndfc")
     default_asset: bpy.props.StringProperty(name="Default Asset", default="")
     user_id: bpy.props.StringProperty(name="User ID", default="blender_user")
@@ -34,6 +47,14 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
             "Use the Zeno-themed Qt windows for Command Palette and Navigator when PySide is "
             "available. Install into Blender's Python: pip install PySide6. "
             "If disabled or PySide is missing, Blender's built-in dialogs are used."
+        ),
+        default=True,
+    )
+    preload_qt_ui: bpy.props.BoolProperty(
+        name="Get Zeno windows ready at startup",
+        description=(
+            "Load Qt in the background a few seconds after Blender starts, so the first "
+            "Zeno window opens straight away instead of after a pause"
         ),
         default=True,
     )
@@ -74,6 +95,7 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         qt_box = layout.box()
         qt_box.label(text="Dashboard UI (Qt) — Blender-side fallback")
         qt_box.prop(self, "use_dashboard_qt_ui")
+        qt_box.prop(self, "preload_qt_ui")
         qt_box.prop(self, "auto_install_pyside")
         row = qt_box.row(align=True)
         row.operator("chimera.check_qt_status", icon="INFO")
@@ -84,6 +106,8 @@ class ChimeraAddonPreferences(bpy.types.AddonPreferences):
         col.prop(self, "api_base_url")
         col.prop(self, "api_token")
         col.prop(self, "dashboard_url")
+        col.prop(self, "show_status_line")
+        col.prop(self, "fetch_linked_on_open")
         col.prop(self, "default_project")
         col.prop(self, "default_asset")
         col.prop(self, "user_id")

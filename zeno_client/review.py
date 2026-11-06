@@ -1,6 +1,7 @@
 """DCC-independent helpers for review submissions and notes."""
 from __future__ import annotations
 
+import math
 from fractions import Fraction
 from typing import Any
 
@@ -46,3 +47,325 @@ def note_line(note: dict[str, Any], width: int = 70) -> str:
     who = note.get("author_name") or ""
     origin = f", from {note['raised_in']}" if note.get("raised_in") else ""
     return f"{where:>9}  [{note.get('status') or 'comment'}]  {text}  ({who}{origin})"
+
+
+# --- review drawings in a DCC viewport -------------------------------------------------
+#
+# Drawings are stored as ``{"shapes": [{tool, color, width, points, text?}]}`` with points
+# normalized to the reviewed picture (0..1, origin top-left) and stroke width as a fraction
+# of the picture height (see the dashboard's lib/annotations.js). A DCC draws them over its
+# camera frame, which is the picture a playblast records.
+
+DEFAULT_SHAPE_COLOR = "#ff3b30"
+DEFAULT_SHAPE_WIDTH = 0.004
+_ELLIPSE_SEGMENTS = 48
+_CURVE_STEPS = 6
+
+Rect = tuple[float, float, float, float]  # x, y, width, height; y grows upward (DCC pixels)
+Point = tuple[float, float]
+
+
+def notes_at_frame(notes: list[dict[str, Any]], frame: int) -> list[dict[str, Any]]:
+    """Notes whose frame (or frame range) covers ``frame``."""
+    out = []
+    for n in notes or []:
+        start = n.get("frame")
+        if start is None:
+            continue
+        end = n.get("frame_end")
+        end = start if end is None else end
+        if start <= frame <= end:
+            out.append(n)
+    return out
+
+
+def drawings_at_frame(notes: list[dict[str, Any]], frame: int) -> list[dict[str, Any]]:
+    return [n for n in notes_at_frame(notes, frame) if (n.get("drawing") or {}).get("shapes")]
+
+
+def adjacent_note_frame(notes: list[dict[str, Any]], frame: int, direction: int) -> int | None:
+    """First note frame after (``direction`` > 0) or before ``frame``; None when there is none."""
+    frames = sorted({int(n["frame"]) for n in notes or [] if n.get("frame") is not None})
+    if direction > 0:
+        return next((f for f in frames if f > frame), None)
+    return next((f for f in reversed(frames) if f < frame), None)
+
+
+def hex_color(value: str | None, alpha: float = 1.0) -> tuple[float, float, float, float]:
+    text = str(value or DEFAULT_SHAPE_COLOR).lstrip("#")
+    if len(text) == 3:
+        text = "".join(c * 2 for c in text)
+    try:
+        r, g, b = (int(text[i : i + 2], 16) / 255 for i in (0, 2, 4))
+    except ValueError:
+        return hex_color(DEFAULT_SHAPE_COLOR, alpha)
+    return (r, g, b, alpha)
+
+
+def to_pixels(rect: Rect, point: Any) -> Point:
+    """Normalized picture point (origin top-left) to DCC pixels (origin bottom-left)."""
+    x, y, w, h = rect
+    return (x + float(point[0]) * w, y + (1.0 - float(point[1])) * h)
+
+
+def _smooth(pts: list[Point]) -> list[Point]:
+    """Same curve as the dashboard pen: quadratic segments through the stroke's midpoints."""
+    if len(pts) < 3:
+        return pts
+    out = [pts[0]]
+    start = pts[0]
+    for i in range(1, len(pts) - 1):
+        ctrl = pts[i]
+        end = ((pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2)
+        for s in range(1, _CURVE_STEPS + 1):
+            t = s / _CURVE_STEPS
+            u = 1 - t
+            out.append((
+                u * u * start[0] + 2 * u * t * ctrl[0] + t * t * end[0],
+                u * u * start[1] + 2 * u * t * ctrl[1] + t * t * end[1],
+            ))
+        start = end
+    out.append(pts[-1])
+    return out
+
+
+def shape_primitives(shape: dict[str, Any], rect: Rect) -> list[dict[str, Any]]:
+    """Pixel-space primitives for one shape.
+
+    Each primitive is ``{"kind": "line", "points", "width", "color"}`` (a line strip),
+    ``{"kind": "tri", "points", "color"}`` or ``{"kind": "text", "pos", "text", "size", "color"}``,
+    where ``pos`` is the text baseline's left end.
+    """
+    pts = [to_pixels(rect, p) for p in shape.get("points") or []]
+    if not pts:
+        return []
+    h = rect[3]
+    color = hex_color(shape.get("color"))
+    width = max(1.5, float(shape.get("width") or DEFAULT_SHAPE_WIDTH) * h)
+    a, b = pts[0], pts[-1]
+    tool = shape.get("tool")
+
+    def line(points: list[Point]) -> dict[str, Any]:
+        return {"kind": "line", "points": points, "width": width, "color": color}
+
+    if tool == "arrow":
+        ang = math.atan2(b[1] - a[1], b[0] - a[0])
+        head = max(10.0, width * 4)
+        shaft_end = (b[0] - math.cos(ang) * head * 0.6, b[1] - math.sin(ang) * head * 0.6)
+        tip = [b] + [(b[0] - head * math.cos(ang + d), b[1] - head * math.sin(ang + d)) for d in (-0.45, 0.45)]
+        return [line([a, shaft_end]), {"kind": "tri", "points": tip, "color": color}]
+    if tool == "rect":
+        (x0, y0), (x1, y1) = a, b
+        return [line([(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)])]
+    if tool == "ellipse":
+        cx, cy = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+        rx, ry = abs(b[0] - a[0]) / 2, abs(b[1] - a[1]) / 2
+        ring = [
+            (cx + rx * math.cos(2 * math.pi * i / _ELLIPSE_SEGMENTS), cy + ry * math.sin(2 * math.pi * i / _ELLIPSE_SEGMENTS))
+            for i in range(_ELLIPSE_SEGMENTS + 1)
+        ]
+        return [line(ring)]
+    if tool == "text":
+        size = max(12.0, h * 0.035)
+        # The dashboard anchors text at its top-left; DCC text draws from the baseline.
+        return [{"kind": "text", "pos": (a[0], a[1] - size), "text": str(shape.get("text") or ""), "size": size, "color": color}]
+    if len(pts) == 1:
+        return [line([a, (a[0] + 0.01, a[1])])]
+    return [line(_smooth(pts))]
+
+
+def drawing_primitives(notes: list[dict[str, Any]], rect: Rect) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for n in notes or []:
+        for shape in (n.get("drawing") or {}).get("shapes") or []:
+            out.extend(shape_primitives(shape, rect))
+    return out
+
+
+def bounding_rect(points: list[Point]) -> Rect:
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+
+def frames_label(note: dict[str, Any]) -> str:
+    """``1012``, ``1012–1018`` or ``Whole clip`` for notes without a frame."""
+    start, end = note.get("frame"), note.get("frame_end")
+    if start is None:
+        return "Whole clip"
+    return f"{start}–{end}" if end not in (None, start) else str(start)
+
+
+def sort_notes(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Timeline order; notes without a frame last."""
+    return sorted(notes or [], key=lambda n: (n.get("frame") is None, n.get("frame") or 0, n.get("created_at") or ""))
+
+
+def notes_summary(notes: list[dict[str, Any]], ticked: int = 0) -> str:
+    """``2 open · 1 waiting for the reviewer · 1 ticked`` (zero counts left out)."""
+    open_n = sum(1 for n in notes or [] if n.get("status") == "open")
+    fixed_n = sum(1 for n in notes or [] if n.get("status") == "fixed")
+    parts = [f"{open_n} open"]
+    if fixed_n:
+        parts.append(f"{fixed_n} waiting for the reviewer")
+    if ticked:
+        parts.append(f"{ticked} ticked")
+    return " · ".join(parts)
+
+
+# --- checks before a review submission -------------------------------------------------
+
+
+def shot_range(shot: dict[str, Any] | None) -> tuple[int, int, int, int] | None:
+    """``(cut_in, cut_out, handle_in, handle_out)`` when the shot has a cut range."""
+    if not shot or shot.get("frame_start") is None or shot.get("frame_end") is None:
+        return None
+    return (int(shot["frame_start"]), int(shot["frame_end"]), int(shot.get("handle_in") or 0), int(shot.get("handle_out") or 0))
+
+
+def submit_checks(
+    scene: dict[str, Any],
+    *,
+    shot: dict[str, Any] | None = None,
+    last: dict[str, Any] | None = None,
+    sequences_off: str | None = None,
+    as_sequence: bool = False,
+) -> list[dict[str, Any]]:
+    """What to tell the artist before rendering.
+
+    ``scene``: ``frame_start``, ``frame_end``, ``fps`` (rational string), ``has_camera``.
+    Each check is ``{"level": "error" | "warning" | "ok", "text", "fix"?}``; ``fix`` names
+    an action the window can offer (``{"action": "use_shot_range", "start", "end", "label"}``).
+    Any ``error`` blocks the submission.
+    """
+    checks: list[dict[str, Any]] = []
+    start, end = int(scene["frame_start"]), int(scene["frame_end"])
+    if not scene.get("has_camera", True):
+        checks.append({"level": "error", "text": "The scene has no camera. The playblast is the camera view."})
+    if as_sequence and sequences_off:
+        checks.append({"level": "error", "text": f"Image sequences are switched off for this studio ({sequences_off}). Send a movie instead."})
+
+    rng = shot_range(shot)
+    code = str((shot or {}).get("shot_code") or "the shot")
+    if rng:
+        cut_in, cut_out, h_in, h_out = rng
+        handles = f", handles {h_in}/{h_out}" if (h_in or h_out) else ""
+        with_handles = (cut_in - h_in, cut_out + h_out)
+        if (start, end) == (cut_in, cut_out):
+            checks.append({"level": "ok", "text": f"Frames {start}–{end} match {code}'s cut{handles}."})
+        elif (start, end) == with_handles and (h_in or h_out):
+            checks.append({"level": "ok", "text": f"Frames {start}–{end} are {code}'s cut {cut_in}–{cut_out} with handles {h_in}/{h_out}."})
+        else:
+            fix = {"action": "use_shot_range", "start": cut_in, "end": cut_out, "label": f"Use {cut_in}–{cut_out}"}
+            if start > cut_in or end < cut_out:
+                text = f"Frames {start}–{end} miss part of {code}'s cut {cut_in}–{cut_out}{handles}."
+                checks.append({"level": "warning", "text": text, "fix": fix})
+            else:
+                text = f"Frames {start}–{end} are wider than {code}'s cut {cut_in}–{cut_out}{handles}."
+                checks.append({"level": "warning", "text": text, "fix": fix})
+    elif shot is None:
+        checks.append({"level": "ok", "text": f"Frames {start}–{end} ({end - start + 1} frames)."})
+    else:
+        checks.append({"level": "warning", "text": f"{code} has no frame range in Zeno yet, so the range can't be checked."})
+
+    last_fps = (last or {}).get("fps")  # the API sends a float (23.976…); the scene a rational string
+    if last_fps and scene.get("fps") and abs(float(last_fps) - float(Fraction(str(scene["fps"])))) > 1e-3:
+        checks.append({
+            "level": "warning",
+            "text": f"{last.get('label') or 'The last revision'} was {fps_string(float(last_fps))} fps; this scene is {scene['fps']} fps. Notes land on the wrong frames if the rate changed by mistake.",
+        })
+    if last and last.get("frame_start") is not None and int(last["frame_start"]) != start:
+        checks.append({
+            "level": "warning",
+            "text": f"{last.get('label') or 'The last revision'} started at frame {last['frame_start']}; this one starts at {start}. Earlier notes are pinned to scene frames.",
+        })
+    return checks
+
+
+# --- task status line (DCC top bar) -----------------------------------------------------
+
+_DECISION_TEXT = {"approved": "approved", "approve": "approved", "changes_requested": "changes requested", "pending": "waiting for review"}
+
+
+def due_label(due: str | None, today: Any) -> tuple[str, str] | None:
+    """``("due Fri", "normal")``, ``("due tomorrow", "warning")``, ``("2 days late", "danger")``.
+
+    ``due`` is an ISO date or timestamp; ``today`` a ``datetime.date``.
+    """
+    if not due:
+        return None
+    from datetime import date, timedelta
+
+    try:
+        d = date.fromisoformat(str(due)[:10])
+    except ValueError:
+        return None
+    days = (d - today).days
+    if days < 0:
+        late = -days
+        return (f"{late} day{'s' if late != 1 else ''} late", "danger")
+    if days == 0:
+        return ("due today", "warning")
+    if days == 1:
+        return ("due tomorrow", "warning")
+    if days < 7:
+        return (f"due {d.strftime('%a')}", "normal")
+    return (f"due {d.day} {d.strftime('%b')}" + ("" if d.year == today.year else f" {d.year}"), "normal")
+
+
+def status_segments(
+    task: dict[str, Any] | None,
+    *,
+    last: dict[str, Any] | None = None,
+    open_notes: int = 0,
+    unread: int = 0,
+    today: Any = None,
+    title_width: int = 28,
+) -> list[tuple[str, str]]:
+    """Pieces of the top-bar line as ``(text, tone)``; tone is normal, ok, warning or danger."""
+    if not task:
+        return []
+    title = str(task.get("title") or task.get("type") or "Task")
+    if len(title) > title_width:
+        title = title[: title_width - 1] + "…"
+    out: list[tuple[str, str]] = [(title, "normal")]
+    if last:
+        state = str(last.get("review_status") or "")
+        tone = {"approved": "ok", "changes_requested": "warning"}.get(state, "normal")
+        out.append((f"{last.get('label') or 'Last revision'} {_DECISION_TEXT.get(state, state.replace('_', ' '))}".strip(), tone))
+    if open_notes:
+        out.append((f"{open_notes} open note{'s' if open_notes != 1 else ''}", "danger"))
+    if today is not None and str(task.get("status") or "").lower() not in ("done", "completed", "approved"):
+        due = due_label(task.get("due_date"), today)
+        if due:
+            out.append(due)
+    if unread:
+        out.append((f"{unread} new", "warning"))
+    return out
+
+
+def notification_text(n: dict[str, Any], width: int = 70) -> str:
+    """One line for a Zeno notification, e.g. ``v003: changes requested (2 open notes)``."""
+    p = n.get("payload") or {}
+    kind = str(n.get("kind") or "")
+    rev = p.get("revision") or ""
+    if kind == "review.decided":
+        text = f"{rev or 'Revision'}: {_DECISION_TEXT.get(str(p.get('decision')), p.get('decision'))}"
+        if p.get("open_notes"):
+            text += f" ({p['open_notes']} open note{'s' if p['open_notes'] != 1 else ''})"
+    elif kind == "review.client_decision":
+        text = f"Client {_DECISION_TEXT.get(str(p.get('decision')), p.get('decision') or 'replied')}" + (f" on {rev}" if rev else "")
+    elif kind in ("review.note", "review.client_note"):
+        who = "Client note" if kind == "review.client_note" else "New note"
+        where = f" on frame {p['frame']}" if p.get("frame") is not None else ""
+        text = f"{who}{where}: {' '.join(str(p.get('excerpt') or '').split())}"
+    elif kind == "review.note_fixed":
+        text = f"Marked fixed: {' '.join(str(p.get('excerpt') or '').split())}"
+    elif kind == "review.submitted":
+        text = f"{rev or 'A revision'} submitted for review"
+    else:
+        text = str(p.get("title") or p.get("excerpt") or kind.replace(".", " ").replace("_", " "))
+    task = p.get("task_title")
+    if task:
+        text = f"{task}: {text}"
+    return text if len(text) <= width else text[: width - 1] + "…"

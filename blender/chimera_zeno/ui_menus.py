@@ -13,6 +13,7 @@ class ZENO_MT_main(bpy.types.Menu):
         col.operator("zeno.version_switcher_open", text="Version Switcher")
         col.operator("zeno.report_issue_open", text="Report Issue")
         col.operator("zeno.publisher_open", text="Publisher")
+        col.operator("zeno.fix_linked_assets", text="Fix Linked Assets", icon="LINKED")
         col.separator()
         col.operator("zeno.submit_review", text="Submit for Review…", icon="RENDER_ANIMATION")
         col.operator("zeno.review_notes", text="Review Notes…", icon="TEXT")

@@ -7,7 +7,7 @@ import os
 
 from zeno_client.client import ZenoClient
 from zeno_ui.qt_compat import get_qt_modules
-from zeno_ui.stylesheet import apply_stylesheet
+from zeno_ui.stylesheet import apply_stylesheet, field_label
 from zeno_ui.workflows import resolve_palette_default_project
 
 
@@ -69,18 +69,20 @@ class ZenoNavigatorActionDialog:
         launch_hint: dict[str, Any] | None = None,
         prefs_default_project: str = "",
         on_load_entity: Callable[..., Any] | None = None,
+        on_link_entity: Callable[..., Any] | None = None,
         stay_on_top: bool = False,
     ) -> None:
         QtWidgets, QtCore, _ = get_qt_modules()
         self._client = client
         self._launch_hint = dict(launch_hint or {})
         self._on_load_entity = on_load_entity
+        self._on_link_entity = on_link_entity
         self._assets: list[dict[str, Any]] = []
         self._groups_by_asset_id: dict[str, list[dict[str, Any]]] = {}
         self._asset_ctx: _AssetContext | None = None
 
         self._dlg = QtWidgets.QDialog(parent)
-        self._dlg.setWindowTitle("Zeno Navigator")
+        self._dlg.setWindowTitle("Zeno · Navigator")
         self._dlg.setMinimumWidth(640)
         if stay_on_top:
             self._dlg.setWindowFlags(self._dlg.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
@@ -88,53 +90,59 @@ class ZenoNavigatorActionDialog:
 
         root = QtWidgets.QVBoxLayout(self._dlg)
         title = QtWidgets.QLabel("Navigator")
-        title.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        title.setObjectName("dialogTitle")
         root.addWidget(title)
 
-        root.addWidget(QtWidgets.QLabel("Project"))
+        root.addWidget(field_label("Project"))
         self._project = QtWidgets.QLineEdit(self._dlg)
         self._project.setReadOnly(True)
         root.addWidget(self._project)
 
-        root.addWidget(QtWidgets.QLabel("Entities"))
+        root.addWidget(field_label("Entities"))
         self._tree = QtWidgets.QTreeWidget(self._dlg)
         self._tree.setHeaderHidden(True)
         self._tree.setMinimumHeight(220)
         root.addWidget(self._tree)
 
-        root.addWidget(QtWidgets.QLabel("Selected Asset"))
+        root.addWidget(field_label("Selected Asset"))
         self._selected_asset = QtWidgets.QLineEdit(self._dlg)
         self._selected_asset.setReadOnly(True)
         root.addWidget(self._selected_asset)
 
-        root.addWidget(QtWidgets.QLabel("Stage"))
+        root.addWidget(field_label("Stage"))
         self._stage = QtWidgets.QComboBox(self._dlg)
         root.addWidget(self._stage)
 
-        root.addWidget(QtWidgets.QLabel("Version"))
+        root.addWidget(field_label("Version"))
         self._version = QtWidgets.QComboBox(self._dlg)
         root.addWidget(self._version)
 
-        root.addWidget(QtWidgets.QLabel("Representation"))
+        root.addWidget(field_label("Representation"))
         self._representation = QtWidgets.QComboBox(self._dlg)
         root.addWidget(self._representation)
 
         self._status = QtWidgets.QLabel("")
         self._status.setWordWrap(True)
-        self._status.setStyleSheet("color: #888888; font-size: 9pt;")
+        self._status.setObjectName("muted")
         root.addWidget(self._status)
 
         row = QtWidgets.QHBoxLayout()
         self._load = QtWidgets.QPushButton("Load Entity")
         self._load.setProperty("primary", True)
+        self._load.setToolTip("Open the asset's file to work on it")
+        self._link = QtWidgets.QPushButton("Link into this file")
+        self._link.setToolTip("Bring this version into the file you have open (a shot, for example)")
         self._refresh = QtWidgets.QPushButton("Refresh")
         self._cancel = QtWidgets.QPushButton("Cancel")
         row.addWidget(self._refresh)
         row.addStretch(1)
         row.addWidget(self._cancel)
+        if on_link_entity is not None:
+            row.addWidget(self._link)
         row.addWidget(self._load)
         root.addLayout(row)
 
+        self._link.clicked.connect(self._on_link_clicked)
         self._tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         self._stage.currentIndexChanged.connect(lambda _=None: self._rebuild_versions())
         self._version.currentIndexChanged.connect(lambda _=None: self._rebuild_representations())
@@ -284,6 +292,19 @@ class ZenoNavigatorActionDialog:
         for rep in sorted(reps):
             self._representation.addItem(rep, rep)
 
+    def _on_link_clicked(self) -> None:
+        if not self._asset_ctx:
+            self._status.setText("Select an asset first.")
+            return
+        if self._on_link_entity:
+            self._on_link_entity(
+                project=self._asset_ctx.project_code,
+                asset=self._asset_ctx.asset_code,
+                version=str(self._version.currentData() or "").strip() or "latest",
+                representation=str(self._representation.currentData() or "").strip() or "blend",
+            )
+        self._status.setText(f"Linking {self._asset_ctx.asset_code} into this file…")
+
     def _on_load_clicked(self) -> None:
         if not self._asset_ctx:
             self._status.setText("Select an asset first.")
@@ -328,26 +349,29 @@ class ZenoVersionSwitcherDialog:
         self._groups: list[dict[str, Any]] = []
 
         self._dlg = QtWidgets.QDialog(parent)
-        self._dlg.setWindowTitle("Zeno Version Switcher")
+        self._dlg.setWindowTitle("Zeno · Version Switcher")
         self._dlg.setMinimumWidth(520)
         if stay_on_top:
             self._dlg.setWindowFlags(self._dlg.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         apply_stylesheet(self._dlg)
 
         root = QtWidgets.QVBoxLayout(self._dlg)
-        root.addWidget(QtWidgets.QLabel("Asset Entity"))
+        title = QtWidgets.QLabel("Version Switcher")
+        title.setObjectName("dialogTitle")
+        root.addWidget(title)
+        root.addWidget(field_label("Asset Entity"))
         self._asset = QtWidgets.QLineEdit(self._dlg)
         self._asset.setReadOnly(True)
         root.addWidget(self._asset)
-        root.addWidget(QtWidgets.QLabel("Stage"))
+        root.addWidget(field_label("Stage"))
         self._stage = QtWidgets.QLineEdit(self._dlg)
         self._stage.setReadOnly(True)
         root.addWidget(self._stage)
-        root.addWidget(QtWidgets.QLabel("Version"))
+        root.addWidget(field_label("Version"))
         self._version = QtWidgets.QComboBox(self._dlg)
         root.addWidget(self._version)
         self._status = QtWidgets.QLabel("")
-        self._status.setStyleSheet("color: #888888; font-size: 9pt;")
+        self._status.setObjectName("muted")
         root.addWidget(self._status)
 
         row = QtWidgets.QHBoxLayout()
@@ -476,32 +500,35 @@ class ZenoReportIssueDialog:
         self._assets: list[dict[str, Any]] = []
 
         self._dlg = QtWidgets.QDialog(parent)
-        self._dlg.setWindowTitle("Report Issue")
+        self._dlg.setWindowTitle("Zeno · Report Issue")
         self._dlg.setMinimumWidth(520)
         if stay_on_top:
             self._dlg.setWindowFlags(self._dlg.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         apply_stylesheet(self._dlg)
         root = QtWidgets.QVBoxLayout(self._dlg)
-        root.addWidget(QtWidgets.QLabel("Title"))
+        title = QtWidgets.QLabel("Report an Issue")
+        title.setObjectName("dialogTitle")
+        root.addWidget(title)
+        root.addWidget(field_label("Title"))
         self._title = QtWidgets.QLineEdit(self._dlg)
         root.addWidget(self._title)
-        root.addWidget(QtWidgets.QLabel("Details"))
+        root.addWidget(field_label("Details"))
         self._body = QtWidgets.QPlainTextEdit(self._dlg)
         self._body.setMinimumHeight(120)
         root.addWidget(self._body)
-        root.addWidget(QtWidgets.QLabel("Asset (optional)"))
+        root.addWidget(field_label("Asset (optional)"))
         self._asset = QtWidgets.QComboBox(self._dlg)
         root.addWidget(self._asset)
         attach_row = QtWidgets.QHBoxLayout()
         self._attachment_path = ""
         self._attachment_label = QtWidgets.QLabel("No attachment")
-        self._attachment_label.setStyleSheet("color: #888888; font-size: 9pt;")
+        self._attachment_label.setObjectName("muted")
         self._attach = QtWidgets.QPushButton("Attach media…")
         attach_row.addWidget(self._attach)
         attach_row.addWidget(self._attachment_label, 1)
         root.addLayout(attach_row)
         self._status = QtWidgets.QLabel("")
-        self._status.setStyleSheet("color: #888888; font-size: 9pt;")
+        self._status.setObjectName("muted")
         self._status.setWordWrap(True)
         root.addWidget(self._status)
         row = QtWidgets.QHBoxLayout()
@@ -623,28 +650,31 @@ class ZenoPublisherDialog:
         self._user_by_id: dict[str, dict[str, Any]] = {}
 
         self._dlg = QtWidgets.QDialog(parent)
-        self._dlg.setWindowTitle("Publisher")
+        self._dlg.setWindowTitle("Zeno · Publisher")
         self._dlg.setMinimumWidth(620)
         if stay_on_top:
             self._dlg.setWindowFlags(self._dlg.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         apply_stylesheet(self._dlg)
         root = QtWidgets.QVBoxLayout(self._dlg)
-        root.addWidget(QtWidgets.QLabel("Project"))
+        title = QtWidgets.QLabel("Publish")
+        title.setObjectName("dialogTitle")
+        root.addWidget(title)
+        root.addWidget(field_label("Project"))
         self._project = QtWidgets.QLineEdit(self._dlg)
         self._project.setReadOnly(True)
         root.addWidget(self._project)
-        root.addWidget(QtWidgets.QLabel("Asset Entity"))
+        root.addWidget(field_label("Asset Entity"))
         self._asset = QtWidgets.QLineEdit(self._dlg)
         self._asset.setReadOnly(True)
         root.addWidget(self._asset)
-        root.addWidget(QtWidgets.QLabel("Stage"))
+        root.addWidget(field_label("Stage"))
         self._stage = QtWidgets.QComboBox(self._dlg)
         self._stage.addItem("Modelling", "modelling")
         self._stage.addItem("Texturing", "texturing")
         self._stage.addItem("Rigging", "rigging")
         self._stage.addItem("Lookdev", "lookdev")
         root.addWidget(self._stage)
-        root.addWidget(QtWidgets.QLabel("Tasks assigned to you"))
+        root.addWidget(field_label("Tasks assigned to you"))
         self._task_search = QtWidgets.QLineEdit(self._dlg)
         self._task_search.setPlaceholderText("Filter tasks by title, stage, status…")
         root.addWidget(self._task_search)
@@ -653,7 +683,7 @@ class ZenoPublisherDialog:
         self._task_list.setMinimumHeight(180)
         root.addWidget(self._task_list)
         self._status = QtWidgets.QLabel("")
-        self._status.setStyleSheet("color: #888888; font-size: 9pt;")
+        self._status.setObjectName("muted")
         self._status.setWordWrap(True)
         root.addWidget(self._status)
         row = QtWidgets.QHBoxLayout()

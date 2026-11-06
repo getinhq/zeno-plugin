@@ -38,6 +38,10 @@ from . import (
     palette,
     preferences,
     review_ops,
+    review_overlay,
+    review_state,
+    scene_facts,
+    task_status,
     ui_menus,
 )
 from . import qt_host as _qt_host
@@ -55,7 +59,8 @@ def register() -> None:
     # probe (and sys.path patch) on first palette click. Doing it again at
     # register time is pure startup tax, so we skip it here. The one-liner
     # log used to confirm PySide was importable is now emitted only when
-    # the user opens the palette.
+    # the user opens the palette. The Qt warm-up scheduled below runs a few
+    # seconds after startup, one small step per timer tick.
 
     launch_context_mod.register_launch_context_prefs()
     preferences.register()
@@ -65,8 +70,12 @@ def register() -> None:
     palette.register()
     action_ops.register()
     navigator.register()
+    review_state.register()
+    scene_facts.register()
     review_ops.register()
+    review_overlay.register()
     ui_menus.register()
+    task_status.register()
 
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon if wm and wm.keyconfigs else None
@@ -75,16 +84,27 @@ def register() -> None:
         kmi = km.keymap_items.new("chimera.palette_open", type="K", value="PRESS", ctrl=True)
         _addon_keymaps.append((km, kmi))
 
+    from . import blender_qt
+
+    blender_qt.schedule_warm_up()
+
 
 def unregister() -> None:
     for km, kmi in _addon_keymaps:
         km.keymap_items.remove(kmi)
     _addon_keymaps.clear()
 
+    from . import blender_qt
+
+    blender_qt.cancel_warm_up()
     _qt_host.shutdown_qt_runtime()
 
+    task_status.unregister()
     ui_menus.unregister()
+    review_overlay.unregister()
     review_ops.unregister()
+    scene_facts.unregister()
+    review_state.unregister()
     navigator.unregister()
     action_ops.unregister()
     palette.unregister()

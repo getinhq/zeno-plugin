@@ -209,6 +209,21 @@ def _queued_load(
     qt_host.queue_main_thread(_do)
 
 
+def _queued_link(*, project: str, asset: str, version: str, representation: str) -> None:
+    """Link an asset version into the open file, outside Qt's event processing."""
+
+    def _do() -> None:
+        try:
+            ret = bpy.ops.chimera.link_asset(
+                "EXEC_DEFAULT", project=project, asset=asset, version=version, representation=representation
+            )
+            print(f"[chimera.link] operator result={ret!r}", flush=True)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+
+    qt_host.queue_main_thread(_do)
+
+
 def _queued_publish(
     *,
     project: str,
@@ -356,6 +371,7 @@ def show_navigator_action_qt(operator: Any | None = None) -> bool:
             launch_hint=hint,
             prefs_default_project=prefs_default,
             on_load_entity=_queued_load,
+            on_link_entity=_queued_link,
             stay_on_top=True,
         )
         qt_host.retain_dialog(dlg)
@@ -454,7 +470,184 @@ def show_publisher_qt(operator: Any | None = None) -> bool:
     return True
 
 
+_review_notes: Any = None
+
+
+def _review_notes_alive() -> bool:
+    if _review_notes is None:
+        return False
+    try:
+        return bool(_review_notes.widget().isVisible())
+    except RuntimeError:  # the C++ dialog was deleted on close
+        return False
+
+
+def show_review_notes_qt(operator: Any | None = None) -> bool:
+    """Show the Review Notes window (one at a time). Returns False if Qt is unavailable."""
+    global _review_notes
+    if _review_notes_alive():
+        _review_notes.show_non_modal()
+        _review_notes.reload()
+        return True
+    if _load_dialog_classes(operator) is None:
+        return False
+    app, err = qt_host.ensure_qt_runtime()
+    if app is None:
+        _report(operator, "WARNING", err or "Qt runtime unavailable.")
+        return False
+    try:
+        from zeno_ui.review_notes_dialog import ZenoReviewNotesDialog
+
+        from .review_host import BlenderReviewHost
+
+        dlg = ZenoReviewNotesDialog(client=make_client(), host=BlenderReviewHost(), parent=None, stay_on_top=True)
+        qt_host.retain_dialog(dlg)
+        dlg.show_non_modal()
+        _review_notes = dlg
+    except Exception as exc:
+        traceback.print_exc()
+        _report(operator, "WARNING", f"Review Notes UI failed to open: {exc}")
+        return False
+    return True
+
+
+_submit_review: Any = None
+
+
+def show_submit_review_qt(operator: Any | None = None, task_id: str = "") -> bool:
+    """Show the Submit for Review window (one at a time). Returns False if Qt is unavailable."""
+    global _submit_review
+    if _submit_review is not None:
+        try:
+            if _submit_review.widget().isVisible():
+                _submit_review.show_non_modal()
+                return True
+        except RuntimeError:
+            pass
+    if _load_dialog_classes(operator) is None:
+        return False
+    app, err = qt_host.ensure_qt_runtime()
+    if app is None:
+        _report(operator, "WARNING", err or "Qt runtime unavailable.")
+        return False
+    try:
+        from zeno_ui.submit_review_dialog import ZenoSubmitReviewDialog
+
+        from .review_host import BlenderReviewHost
+
+        dlg = ZenoSubmitReviewDialog(
+            client=make_client(), host=BlenderReviewHost(), task_id=task_id, parent=None, stay_on_top=True
+        )
+        qt_host.retain_dialog(dlg)
+        dlg.show_non_modal()
+        _submit_review = dlg
+    except Exception as exc:
+        traceback.print_exc()
+        _report(operator, "WARNING", f"Submit for Review UI failed to open: {exc}")
+        return False
+    return True
+
+
+def reload_review_notes_qt() -> None:
+    """Refetch the open Review Notes window's notes (after a submission, for example)."""
+    if _review_notes_alive():
+        _review_notes.reload()
+
+
+# ---------------------------------------------------------------------------
+# Warm-up: pay Qt's one-time costs while Blender is idle, not on first click.
+# ---------------------------------------------------------------------------
+
+# Importing PySide, creating the QApplication, loading the fonts and parsing the
+# stylesheet cost a second or more the first time, which made the first Zeno
+# window feel slow to open. Each step runs on its own timer tick so Blender's UI
+# never stalls for the whole lot at once.
+_WARM_DELAY_S = 3.0
+_warm_steps: list[Any] = []
+
+
+def _warm_wanted() -> bool:
+    if bpy.app.background:
+        return False
+    prefs = addon_prefs()
+    if prefs is None:
+        return True
+    return bool(
+        getattr(prefs, "preload_qt_ui", True)
+        and getattr(prefs, "use_dashboard_qt_ui", True)
+        and not getattr(prefs, "use_hub_mode", False)
+    )
+
+
+def _warm_import_qt() -> bool:
+    pyside_provision.ensure_pyside_on_path()
+    if not pyside_provision.pyside_available():
+        return False  # the first click offers the install, as before
+    from zeno_ui.qt_compat import get_qt_modules
+
+    get_qt_modules()
+    return True
+
+
+def _warm_app() -> bool:
+    _, err = qt_host.ensure_qt_runtime()
+    return err is None
+
+
+def _warm_dialogs() -> bool:
+    import zeno_client  # noqa: F401  (pulls in httpx, used by every dialog)
+    import zeno_ui.action_dialogs  # noqa: F401
+    import zeno_ui.qt_dialogs  # noqa: F401
+    import zeno_ui.review_notes_dialog  # noqa: F401
+    import zeno_ui.submit_review_dialog  # noqa: F401
+    from zeno_ui.stylesheet import warm_up
+
+    warm_up()
+    return True
+
+
+def _warm_tick() -> float | None:
+    if not _warm_steps:
+        return None
+    step = _warm_steps.pop(0)
+    try:
+        keep_going = step()
+    except Exception as exc:  # never let a warm-up problem reach the artist
+        print(f"[chimera] Qt warm-up skipped: {exc}")
+        keep_going = False
+    if not keep_going:
+        _warm_steps.clear()
+        return None
+    return 0.2 if _warm_steps else None
+
+
+def cancel_warm_up() -> None:
+    _warm_steps.clear()
+    try:
+        if bpy.app.timers.is_registered(_warm_tick):
+            bpy.app.timers.unregister(_warm_tick)
+    except Exception:  # pragma: no cover - Blender runtime
+        pass
+
+
+def schedule_warm_up() -> None:
+    """Prepare the Qt windows a few seconds after Blender starts (see above)."""
+    if _warm_steps or not _warm_wanted():
+        return
+    _warm_steps.extend([_warm_import_qt, _warm_app, _warm_dialogs])
+    try:
+        bpy.app.timers.register(_warm_tick, first_interval=_WARM_DELAY_S, persistent=True)
+    except Exception as exc:  # pragma: no cover - Blender runtime
+        _warm_steps.clear()
+        print(f"[chimera] could not schedule Qt warm-up: {exc}")
+
+
 __all__ = [
+    "cancel_warm_up",
+    "schedule_warm_up",
+    "show_review_notes_qt",
+    "reload_review_notes_qt",
+    "show_submit_review_qt",
     "show_command_palette_qt",
     "show_navigator_qt",
     "show_navigator_action_qt",

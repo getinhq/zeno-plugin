@@ -4,8 +4,11 @@
   a 3D view is available, Workbench otherwise), restores every render setting it touched,
   and uploads it in the background as the task's next review revision. The scene's first
   frame and exact frame rate go with it, so reviewers' notes land on scene frame numbers.
+  Notes the artist ticked as fixed are marked fixed *in that revision* once it is uploaded.
 - ``zeno.review_notes``: popup of the task's unresolved notes; click a frame to jump there,
-  mark a note fixed, or drop all notes onto the timeline as markers.
+  tick a note as fixed, or drop all notes onto the timeline as markers. Opens the Zeno
+  Review Notes window (``zeno_ui.review_notes_dialog``) when Qt is available; the popup is
+  the fallback.
 """
 from __future__ import annotations
 
@@ -19,47 +22,8 @@ import bpy
 
 from zeno_client.review import MARKER_PREFIX, fps_string, marker_name, note_line, playblast_percentage
 
+from . import review_state as state
 from .bridge import addon_prefs, make_client
-
-_task_items_cache: list[tuple[str, str, str]] = []
-_notes_cache: dict[str, Any] = {"task_id": "", "notes": [], "error": ""}
-
-
-def _launch_task_id() -> str:
-    try:
-        from zeno_client.launch_context import read_launch_context_from_environ
-
-        ctx = read_launch_context_from_environ()
-        return str(getattr(ctx, "task_id", "") or "") if ctx else ""
-    except Exception:
-        return ""
-
-
-def _load_task_items() -> list[tuple[str, str, str]]:
-    global _task_items_cache
-    try:
-        tasks = make_client().list_my_tasks()
-    except Exception as exc:  # noqa: BLE001
-        return [("", "Could not load tasks", str(exc))]
-    items = []
-    for t in tasks:
-        label = str(t.get("title") or t.get("type") or t.get("id"))
-        status = str(t.get("status") or "").replace("_", " ")
-        items.append((str(t["id"]), f"{label}  ·  {status}", label))
-    _task_items_cache = items or [("", "No tasks assigned to you", "")]
-    return _task_items_cache
-
-
-def _task_items(self, context):  # pragma: no cover - Blender runtime
-    return _task_items_cache or [("", "No tasks loaded", "")]
-
-
-def _default_task(scene) -> None:  # pragma: no cover - Blender runtime
-    ids = [i[0] for i in _task_items_cache if i[0]]
-    wanted = _launch_task_id()
-    if wanted and wanted in ids:
-        scene.zeno_review_task = wanted
-
 
 # --- playblast -------------------------------------------------------------------------
 
@@ -102,8 +66,11 @@ def playblast(context, out_dir: Path) -> Path:  # pragma: no cover - Blender run
         "ff_codec": render.ffmpeg.codec,
         "ff_crf": render.ffmpeg.constant_rate_factor,
         "ff_audio": render.ffmpeg.audio_codec,
+        "use_preview_range": scene.use_preview_range,
     }
     try:
+        # The viewport render follows the preview range, which jumping to a note sets.
+        scene.use_preview_range = False
         render.filepath = str(out_dir / "playblast_")
         render.use_file_extension = True
         render.resolution_percentage = playblast_percentage(render.resolution_x, render.resolution_percentage)
@@ -131,6 +98,7 @@ def playblast(context, out_dir: Path) -> Path:  # pragma: no cover - Blender run
         render.ffmpeg.codec = saved["ff_codec"]
         render.ffmpeg.constant_rate_factor = saved["ff_crf"]
         render.ffmpeg.audio_codec = saved["ff_audio"]
+        scene.use_preview_range = saved["use_preview_range"]
     movies = sorted(out_dir.glob("playblast_*"), key=lambda p: p.stat().st_mtime)
     if not movies:
         raise RuntimeError("Blender did not write a playblast")
@@ -160,8 +128,10 @@ def playblast_sequence(context, out_dir: Path) -> dict[int, Path]:  # pragma: no
         "color_mode": settings.color_mode,
         "compression": settings.compression,
         "stamps": {k: getattr(render, k) for k in _VOLATILE_STAMPS if hasattr(render, k)},
+        "use_preview_range": scene.use_preview_range,
     }
     try:
+        scene.use_preview_range = False
         render.filepath = str(out_dir / "frame_")
         render.use_file_extension = True
         render.resolution_percentage = playblast_percentage(render.resolution_x, render.resolution_percentage)
@@ -191,6 +161,7 @@ def playblast_sequence(context, out_dir: Path) -> dict[int, Path]:  # pragma: no
         settings.compression = saved["compression"]
         for key, value in saved["stamps"].items():
             setattr(render, key, value)
+        scene.use_preview_range = saved["use_preview_range"]
     frames = {}
     for path in out_dir.glob("frame_*.png"):
         digits = path.stem.split("_")[-1]
@@ -219,10 +190,19 @@ class ZENO_OT_submit_review(bpy.types.Operator):
         default=False,
     )
     open_after: bpy.props.BoolProperty(name="Open the review in the browser", default=False)
+    keep_task: bpy.props.BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+    native: bpy.props.BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"}, description="Skip the Zeno window")
 
     def invoke(self, context, event):  # pragma: no cover - Blender runtime
-        _load_task_items()
-        _default_task(context.scene)
+        prefs = addon_prefs()
+        if not self.native and (getattr(prefs, "use_dashboard_qt_ui", True) if prefs else True):
+            from . import blender_qt
+
+            if blender_qt.show_submit_review_qt(operator=self, task_id=state.current_task(context.scene)):
+                return {"FINISHED"}
+        if not (self.keep_task and state.current_task(context.scene)):
+            state.load_task_items()
+            state.default_task(context.scene)
         return context.window_manager.invoke_props_dialog(self, width=460)
 
     def draw(self, context):  # pragma: no cover - Blender runtime
@@ -234,44 +214,76 @@ class ZENO_OT_submit_review(bpy.types.Operator):
         col.label(text=f"Frames {scene.frame_start}–{scene.frame_end} at {fps_string(r.fps, r.fps_base)} fps", icon="RENDER_ANIMATION")
         col.prop(self, "as_sequence")
         col.prop(self, "open_after")
+        pending = state.pending_for(scene, state.current_task(scene))
+        if pending:
+            box = col.box()
+            box.label(text=f"Marks {len(pending)} note(s) fixed in this revision:", icon="CHECKMARK")
+            by_id = {n["id"]: n for n in state.notes["notes"]}
+            for note_id in pending[:6]:
+                n = by_id.get(note_id)
+                box.label(text=note_line(n, width=56).strip() if n else note_id)
+            if len(pending) > 6:
+                box.label(text=f"…and {len(pending) - 6} more")
 
     def execute(self, context):  # pragma: no cover - Blender runtime
         scene = context.scene
-        task_id = str(getattr(scene, "zeno_review_task", "") or "")
+        task_id = state.current_task(scene)
         if not task_id:
             self.report({"ERROR"}, "Pick the task this playblast is for.")
             return {"CANCELLED"}
         if self.as_sequence:
             # Ask before rendering: the studio may have image sequences switched off.
-            try:
-                decision = make_client().resolve_storage("frame.png")
-            except Exception:  # noqa: BLE001 - older server: no storage workflow, allow
-                decision = {}
-            if decision.get("strategy") == "off":
-                self.report({"ERROR"}, f"Image sequences are off ({decision.get('reason', '')}). Untick 'As image sequence'.")
+            off = sequences_off_reason(make_client())
+            if off is not None:
+                self.report({"ERROR"}, f"Image sequences are off ({off}). Untick 'As image sequence'.")
                 return {"CANCELLED"}
-        out_dir = Path(tempfile.mkdtemp(prefix="zeno_playblast_"))
-        fps = fps_string(scene.render.fps, scene.render.fps_base)
-        description = self.description.strip() or None
         try:
-            if self.as_sequence:
-                frames = playblast_sequence(context, out_dir)
-                kwargs = {"task_id": task_id, "frames": frames, "fps": fps, "description": description}
-            else:
-                movie = playblast(context, out_dir)
-                kwargs = {"task_id": task_id, "file_path": movie, "frame_start": scene.frame_start,
-                          "fps": fps, "description": description}
+            kwargs = render_playblast(context, task_id, as_sequence=self.as_sequence, description=self.description)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Playblast failed: {exc}")
             return {"CANCELLED"}
-        _start_upload(kwargs, open_after=self.open_after, sequence=self.as_sequence)
+        start_upload(
+            kwargs, sequence=self.as_sequence, fixes=state.pending_for(scene, task_id),
+            on_done=lambda result: _popup_result(result, open_after=self.open_after),
+        )
         self.report({"INFO"}, "Zeno: uploading playblast…")
         return {"FINISHED"}
 
 
-def _start_upload(kwargs: dict, *, open_after: bool, sequence: bool = False) -> None:  # pragma: no cover - Blender runtime
+def sequences_off_reason(client) -> str | None:
+    """Why the studio refuses image sequences, or None when they are allowed."""
+    try:
+        decision = client.resolve_storage("frame.png")
+    except Exception:  # noqa: BLE001 - older server: no storage workflow, allow
+        return None
+    return str(decision.get("reason") or "studio storage workflow") if decision.get("strategy") == "off" else None
+
+
+def render_playblast(context, task_id: str, *, as_sequence: bool, description: str = "") -> dict[str, Any]:  # pragma: no cover - Blender runtime
+    """Render the scene range; returns the upload arguments for ``start_upload``."""
+    scene = context.scene
+    out_dir = Path(tempfile.mkdtemp(prefix="zeno_playblast_"))
+    fps = fps_string(scene.render.fps, scene.render.fps_base)
+    text = (description or "").strip() or None
+    if as_sequence:
+        return {"task_id": task_id, "frames": playblast_sequence(context, out_dir), "fps": fps, "description": text}
+    return {"task_id": task_id, "file_path": playblast(context, out_dir), "frame_start": scene.frame_start,
+            "fps": fps, "description": text}
+
+
+def review_url(item_id: str) -> str:
+    return f"{_dashboard_url()}/review/{item_id}"
+
+
+def start_upload(kwargs: dict, *, sequence: bool, fixes: list[str] | tuple[str, ...] = (), on_done=None) -> None:  # pragma: no cover - Blender runtime
+    """Upload on a worker thread, then (on Blender's main thread) clear the fixes that were
+    sent, refresh notes and call ``on_done(result)``.
+
+    ``result`` has ``error`` on failure, else ``item``, ``url``, ``fixed`` and ``fix_errors``.
+    """
     result: dict[str, Any] = {}
     client = make_client()
+    task_id = kwargs["task_id"]
 
     def work() -> None:
         try:
@@ -279,6 +291,11 @@ def _start_upload(kwargs: dict, *, open_after: bool, sequence: bool = False) -> 
             result["item"] = submit(**kwargs)
         except Exception as exc:  # noqa: BLE001
             result["error"] = str(exc)
+            return
+        item = result["item"]
+        result["fixed"], result["fix_errors"] = state.send_fixes(
+            client, list(fixes), item_id=item.get("id"), comment=f"Fixed in {item.get('label') or 'this revision'}"
+        )
 
     thread = threading.Thread(target=work, name="zeno-review-upload", daemon=True)
     thread.start()
@@ -286,45 +303,55 @@ def _start_upload(kwargs: dict, *, open_after: bool, sequence: bool = False) -> 
     def poll():
         if thread.is_alive():
             return 0.5
-        wm = bpy.context.window_manager
-        if "error" in result:
-            msg = f"Upload failed: {result['error']}"
-            wm.popup_menu(lambda self, _c: self.layout.label(text=msg), title="Zeno review", icon="ERROR")
-            return None
-        item = result["item"]
-        url = f"{_dashboard_url()}/review/{item['id']}"
-        print(f"[Zeno] submitted {item.get('label')} for review: {url}")
-        if open_after:
-            webbrowser.open(url)
+        if "error" not in result:
+            item = result["item"]
+            result["url"] = review_url(item["id"])
+            print(f"[Zeno] submitted {item.get('label')} for review: {result['url']}")
+            scene = bpy.context.scene
+            if scene is not None and result["fixed"]:
+                left = [n for n in state.pending_for(scene, task_id) if n not in result["fixed"]]
+                state.set_pending(scene, task_id, left)
+            if scene is not None and state.current_task(scene) == task_id:
+                state.refresh_async(task_id)
+            from . import blender_qt, task_status
 
-        upload = item.get("upload") or {}
-
-        def draw(self, _c):
-            self.layout.label(text=f"{item.get('label', 'Revision')} is with the reviewer.")
-            if upload.get("frames"):
-                self.layout.label(
-                    text=f"Uploaded {upload['uploaded_frames']} of {upload['frames']} frames; "
-                    f"{upload['skipped_frames']} were already stored."
-                )
-            self.layout.operator("wm.url_open", text="Open in browser", icon="URL").url = url
-
-        wm.popup_menu(draw, title="Zeno: submitted for review", icon="CHECKMARK")
+            blender_qt.reload_review_notes_qt()
+            task_status.refresh()
+        if on_done is not None:
+            on_done(result)
         return None
 
     bpy.app.timers.register(poll, first_interval=0.5)
 
 
-# --- notes -----------------------------------------------------------------------------
-
-
-def _fetch_notes(task_id: str) -> None:
-    _notes_cache.update(task_id=task_id, notes=[], error="")
-    if not task_id:
+def _popup_result(result: dict[str, Any], *, open_after: bool) -> None:  # pragma: no cover - Blender runtime
+    wm = bpy.context.window_manager
+    if "error" in result:
+        msg = f"Upload failed: {result['error']}"
+        wm.popup_menu(lambda self, _c: self.layout.label(text=msg), title="Zeno review", icon="ERROR")
         return
-    try:
-        _notes_cache["notes"] = make_client().list_review_notes(task_id, status="unresolved")
-    except Exception as exc:  # noqa: BLE001
-        _notes_cache["error"] = str(exc)
+    item, url = result["item"], result["url"]
+    if open_after:
+        webbrowser.open(url)
+    upload = item.get("upload") or {}
+
+    def draw(self, _c):
+        self.layout.label(text=f"{item.get('label', 'Revision')} is with the reviewer.")
+        if upload.get("frames"):
+            self.layout.label(
+                text=f"Uploaded {upload['uploaded_frames']} of {upload['frames']} frames; "
+                f"{upload['skipped_frames']} were already stored."
+            )
+        if result["fixed"]:
+            self.layout.label(text=f"{len(result['fixed'])} note(s) marked fixed in this revision.", icon="CHECKMARK")
+        if result["fix_errors"]:
+            self.layout.label(text=f"{len(result['fix_errors'])} note(s) could not be updated; they stay ticked.", icon="ERROR")
+        self.layout.operator("wm.url_open", text="Open in browser", icon="URL").url = url
+
+    wm.popup_menu(draw, title="Zeno: submitted for review", icon="CHECKMARK")
+
+
+# --- notes -----------------------------------------------------------------------------
 
 
 class ZENO_OT_review_notes(bpy.types.Operator):
@@ -333,10 +360,15 @@ class ZENO_OT_review_notes(bpy.types.Operator):
     bl_description = "Unresolved review notes for your task; jump to their frames"
 
     def invoke(self, context, event):  # pragma: no cover - Blender runtime
-        _load_task_items()
-        if not context.scene.zeno_review_task:
-            _default_task(context.scene)
-        _fetch_notes(str(context.scene.zeno_review_task or ""))
+        prefs = addon_prefs()
+        if (getattr(prefs, "use_dashboard_qt_ui", True) if prefs else True):
+            from . import blender_qt
+
+            if blender_qt.show_review_notes_qt(operator=self):
+                return {"FINISHED"}
+        state.load_task_items()
+        state.default_task(context.scene)
+        state.fetch_notes(state.current_task(context.scene))
         return context.window_manager.invoke_popup(self, width=620)
 
     def draw(self, context):  # pragma: no cover - Blender runtime
@@ -344,10 +376,11 @@ class ZENO_OT_review_notes(bpy.types.Operator):
         row = layout.row()
         row.prop(context.scene, "zeno_review_task", text="Task")
         row.operator("zeno.review_notes_refresh", text="", icon="FILE_REFRESH")
-        if _notes_cache["error"]:
-            layout.label(text=_notes_cache["error"], icon="ERROR")
+        if state.notes["error"]:
+            layout.label(text=state.notes["error"], icon="ERROR")
             return
-        notes = _notes_cache["notes"]
+        notes = state.notes["notes"]
+        pending = set(state.pending_for(context.scene, state.current_task(context.scene)))
         if not notes:
             layout.label(text="No open notes. Nice.", icon="CHECKMARK")
             return
@@ -359,7 +392,8 @@ class ZENO_OT_review_notes(bpy.types.Operator):
                 op.frame = int(n["frame"])
             r.label(text=note_line(n, width=60).strip().split("  ", 1)[-1])
             if n.get("status") == "open":
-                r.operator("zeno.review_note_fixed", text="Fixed", icon="CHECKMARK").note_id = n["id"]
+                ticked = n["id"] in pending
+                r.operator("zeno.review_toggle_fix", text="Fixed" if ticked else "Fix", icon="CHECKBOX_HLT" if ticked else "CHECKBOX_DEHLT", depress=ticked).note_id = n["id"]
         layout.operator("zeno.review_markers", text="Show as timeline markers", icon="MARKER_HLT")
 
     def execute(self, context):  # pragma: no cover - Blender runtime
@@ -371,7 +405,7 @@ class ZENO_OT_review_notes_refresh(bpy.types.Operator):
     bl_label = "Refresh Review Notes"
 
     def execute(self, context):  # pragma: no cover - Blender runtime
-        _fetch_notes(str(context.scene.zeno_review_task or ""))
+        state.refresh_async(state.current_task(context.scene), with_tasks=True)
         return {"FINISHED"}
 
 
@@ -380,27 +414,56 @@ class ZENO_OT_review_goto_frame(bpy.types.Operator):
     bl_label = "Go to Note Frame"
 
     frame: bpy.props.IntProperty()
+    frame_end: bpy.props.IntProperty(default=-1)
+    loop_range: bpy.props.BoolProperty(default=False, description="Also set the preview range to the note's frames")
 
     def execute(self, context):  # pragma: no cover - Blender runtime
-        context.scene.frame_set(self.frame)
+        scene = context.scene
+        if self.loop_range and self.frame_end > self.frame:
+            scene.use_preview_range = True
+            scene.frame_preview_start, scene.frame_preview_end = self.frame, self.frame_end
+        scene.frame_set(self.frame)
         return {"FINISHED"}
 
 
-class ZENO_OT_review_note_fixed(bpy.types.Operator):
-    bl_idname = "zeno.review_note_fixed"
-    bl_label = "Mark Note Fixed"
-    bl_description = "Tell the reviewer this note is fixed (they verify it on your next submission)"
+class ZENO_OT_review_toggle_fix(bpy.types.Operator):
+    bl_idname = "zeno.review_toggle_fix"
+    bl_label = "Fixed in Next Submission"
+    bl_description = "Tick when you have fixed this note; it is marked fixed in your next Submit for Review"
 
     note_id: bpy.props.StringProperty()
 
     def execute(self, context):  # pragma: no cover - Blender runtime
-        try:
-            make_client().update_review_note(self.note_id, status="fixed", comment="Fixed in Blender")
-        except Exception as exc:  # noqa: BLE001
-            self.report({"ERROR"}, f"Could not update the note: {exc}")
+        scene = context.scene
+        task_id = state.current_task(scene)
+        pending = state.pending_for(scene, task_id)
+        if self.note_id in pending:
+            pending.remove(self.note_id)
+        else:
+            pending.append(self.note_id)
+        state.set_pending(scene, task_id, pending)
+        return {"FINISHED"}
+
+
+class ZENO_OT_review_send_fixes(bpy.types.Operator):
+    bl_idname = "zeno.review_send_fixes"
+    bl_label = "Mark Fixed Without Submitting"
+    bl_description = (
+        "Mark the ticked notes fixed now, against the latest revision. Use this when the fix "
+        "reaches review another way (a farm render, for example)"
+    )
+
+    def execute(self, context):  # pragma: no cover - Blender runtime
+        scene = context.scene
+        task_id = state.current_task(scene)
+        pending = state.pending_for(scene, task_id)
+        sent, failed = state.send_fixes(make_client(), pending, item_id=None, comment="Fixed in Blender")
+        state.set_pending(scene, task_id, [n for n in pending if n not in sent])
+        state.fetch_notes(task_id)
+        if failed:
+            self.report({"ERROR"}, f"{len(failed)} note(s) could not be updated: {failed[0]}")
             return {"CANCELLED"}
-        _fetch_notes(str(context.scene.zeno_review_task or ""))
-        self.report({"INFO"}, "Marked fixed. It is verified when the reviewer sees your next playblast.")
+        self.report({"INFO"}, f"{len(sent)} note(s) marked fixed. The reviewer verifies them on the next revision.")
         return {"FINISHED"}
 
 
@@ -414,7 +477,7 @@ class ZENO_OT_review_markers(bpy.types.Operator):
         for m in [m for m in markers if m.name.startswith(MARKER_PREFIX)]:
             markers.remove(m)
         count = 0
-        for n in _notes_cache["notes"]:
+        for n in state.notes["notes"]:
             if n.get("frame") is None:
                 continue
             markers.new(name=marker_name(n), frame=int(n["frame"]))
@@ -428,15 +491,13 @@ _CLASSES = (
     ZENO_OT_review_notes,
     ZENO_OT_review_notes_refresh,
     ZENO_OT_review_goto_frame,
-    ZENO_OT_review_note_fixed,
+    ZENO_OT_review_toggle_fix,
+    ZENO_OT_review_send_fixes,
     ZENO_OT_review_markers,
 )
 
 
 def register() -> None:
-    bpy.types.Scene.zeno_review_task = bpy.props.EnumProperty(
-        name="Task", items=_task_items, options={"SKIP_SAVE"}
-    )
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
 
@@ -444,5 +505,3 @@ def register() -> None:
 def unregister() -> None:
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)
-    if hasattr(bpy.types.Scene, "zeno_review_task"):
-        del bpy.types.Scene.zeno_review_task

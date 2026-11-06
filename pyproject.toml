@@ -31,4 +31,4 @@ chimera-hub = "chimera_hub.__main__:main"
 include = ["zeno_client*", "zeno_ui*", "chimera_zeno_maya*", "chimera_hub*", "zeno_thin*"]
 
 [tool.setuptools.package-data]
-zeno_ui = ["theme.json", "styles/*.qss"]
+zeno_ui = ["theme.json", "styles/*.qss", "styles/icons/*.svg", "fonts/*.ttf", "fonts/OFL.txt"]

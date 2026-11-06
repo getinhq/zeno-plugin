@@ -280,6 +280,53 @@ class ZenoClient:
         data["upload"] = stats
         return data
 
+    def list_notifications(self, project_id: str, *, unread_only: bool = False, limit: int = 20) -> dict[str, Any]:
+        """``{"items": [...], "unread_count": n}`` for the caller in one project."""
+        params = {"project_id": project_id, "limit": str(limit)}
+        if unread_only:
+            params["unread_only"] = "true"
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/notifications"), params=params)
+            data = parse_json(resp, operation="list_notifications")
+            assert isinstance(data, dict)
+            return data
+
+    def mark_notifications_read(self, ids: list[str]) -> None:
+        with self._client() as c:
+            resp = c.post(_join(self.base_url, "/api/v1/notifications/mark-read"), json={"ids": list(ids)})
+            parse_json(resp, operation="mark_notifications_read")
+
+    def put_scene_facts(self, shot_id: str, facts: dict[str, Any]) -> dict[str, Any]:
+        """Report what the shot file contains; returns ``{"facts", "report"}`` (see the API)."""
+        with self._client() as c:
+            resp = c.put(_join(self.base_url, f"/api/v1/shots/{shot_id}/scene-facts"), json=facts)
+            data = parse_json(resp, operation="put_scene_facts")
+            assert isinstance(data, dict)
+            return data
+
+    def lookup_versions(self, content_ids: list[str]) -> list[dict[str, Any]]:
+        """Asset versions stored under these content ids (unknown ids are left out)."""
+        with self._client() as c:
+            resp = c.post(_join(self.base_url, "/api/v1/versions/lookup"), json={"content_ids": list(content_ids)})
+            data = parse_json(resp, operation="lookup_versions")
+            assert isinstance(data, list)
+            return [d for d in data if isinstance(d, dict)]
+
+    def get_shot(self, shot_id: str) -> dict[str, Any]:
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, f"/api/v1/shots/{shot_id}"))
+            data = parse_json(resp, operation="get_shot")
+            assert isinstance(data, dict)
+            return data
+
+    def latest_review_item(self, task_id: str) -> dict[str, Any] | None:
+        """The task's newest review revision, or None before the first submission."""
+        with self._client() as c:
+            resp = c.get(_join(self.base_url, "/api/v1/reviews/items"), params={"task_id": task_id, "latest_only": "true"})
+            data = parse_json(resp, operation="latest_review_item")
+            assert isinstance(data, list)
+            return next((d for d in data if isinstance(d, dict)), None)
+
     def list_review_notes(self, task_id: str, *, status: str | None = "unresolved") -> list[dict[str, Any]]:
         """Review notes for a task: ``unresolved`` (open or fixed), ``open``, ``fixed``, ``verified`` or all."""
         params = {"task_id": task_id}
@@ -291,10 +338,21 @@ class ZenoClient:
             assert isinstance(data, list)
             return [d for d in data if isinstance(d, dict)]
 
-    def update_review_note(self, note_id: str, *, status: str, comment: str | None = None) -> dict[str, Any]:
+    def update_review_note(
+        self,
+        note_id: str,
+        *,
+        status: str,
+        comment: str | None = None,
+        fixed_in_item_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Change a note's status. ``fixed_in_item_id`` names the revision that carries the fix
+        (default: the task's latest revision)."""
         body: dict[str, Any] = {"status": status}
         if comment:
             body["comment"] = comment
+        if fixed_in_item_id:
+            body["fixed_in_item_id"] = fixed_in_item_id
         with self._client() as c:
             resp = c.patch(_join(self.base_url, f"/api/v1/reviews/notes/{note_id}"), json=body)
             data = parse_json(resp, operation="update_review_note")
